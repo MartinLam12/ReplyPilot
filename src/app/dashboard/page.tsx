@@ -2,17 +2,13 @@
 
 import Link from "next/link";
 import { Card, Button } from "@/components/ui";
-import { useUser } from "@/lib/user-context";
 import { Mail, CalendarCheck, ArrowRight, MessageSquare, Users } from "lucide-react";
 
 export default function DashboardPage() {
-  const { user } = useUser();
-  const firstName = user.name ? user.name.split(" ")[0] : "there";
-
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-surface-900">Welcome back, {firstName}</h1>
+        <h1 className="text-2xl font-bold text-surface-900">Dashboard</h1>
         <p className="text-surface-500 mt-1">What do you want to do today?</p>
       </div>
 
