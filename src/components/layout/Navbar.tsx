@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -9,19 +9,18 @@ import { Button } from "@/components/ui";
 import {
   Menu,
   X,
-  BarChart3,
-  ClipboardList,
-  FileText,
+  LayoutDashboard,
+  Mail,
+  CalendarCheck,
   Settings,
   LogOut,
-  ChevronRight,
   User,
 } from "lucide-react";
 
 const navLinks = [
-  { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
-  { href: "/assessment", label: "New Assessment", icon: ClipboardList },
-  { href: "/reports", label: "Reports", icon: FileText },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/inbox", label: "Email Reply", icon: Mail },
+  { href: "/classes", label: "Class Follow-Ups", icon: CalendarCheck },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -144,9 +143,9 @@ function AppNavbar() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Link href="/assessment">
-              <Button size="sm" icon={<ChevronRight className="w-4 h-4" />}>
-                New Assessment
+            <Link href="/inbox">
+              <Button size="sm" icon={<Mail className="w-4 h-4" />}>
+                Reply to Email
               </Button>
             </Link>
 
