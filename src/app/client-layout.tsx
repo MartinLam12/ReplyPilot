@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils";
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLanding = pathname === "/";
-  const isApp = !isLanding;
+  const isAuth = pathname === "/login" || pathname === "/signup";
+  const isApp = !isLanding && !isAuth;
 
   return (
     <UserProvider>

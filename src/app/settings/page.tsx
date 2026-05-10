@@ -1,83 +1,177 @@
 "use client";
 
-import { useState } from "react";
-import { Card, CardTitle, CardDescription, Button, Input } from "@/components/ui";
-import { useUser } from "@/lib/user-context";
-import { Save, User, Building2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Card, CardTitle, CardDescription, Button, Input, Textarea } from "@/components/ui";
+import { getGymSettings, saveGymSettings, disconnectGmail } from "@/app/actions/gym-settings";
+import { Save, Building2, Mail, CheckCircle2, AlertCircle } from "lucide-react";
+import type { GymSettings } from "@/lib/types";
 
 export default function SettingsPage() {
-  const { user, updateUser, initials } = useUser();
+  const [settings, setSettings] = useState<GymSettings | null>(null);
+  const [gymName, setGymName] = useState("");
+  const [gymContext, setGymContext] = useState("");
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
-  const [name, setName] = useState(user.name);
-  const [email, setEmail] = useState(user.email);
-  const [businessName, setBusinessName] = useState(user.businessName);
+  useEffect(() => {
+    getGymSettings().then((s) => {
+      if (s) {
+        setSettings(s);
+        setGymName(s.gym_name);
+        setGymContext(s.gym_context);
+      }
+    });
 
-  const handleSave = () => {
-    updateUser({ name, email, businessName });
+    // Handle OAuth result query params
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("connected") === "true") {
+      getGymSettings().then(setSettings);
+      window.history.replaceState({}, "", "/settings");
+    }
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await saveGymSettings(gymName, gymContext);
+    setSaving(false);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const handleDisconnect = async () => {
+    if (!confirm("Disconnect Gmail? You can reconnect any time.")) return;
+    setDisconnecting(true);
+    await disconnectGmail();
+    setSettings((prev) => prev ? { ...prev, gmail_email: null, gmail_refresh_token: null } : null);
+    setDisconnecting(false);
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-8">
+    <div className="p-4 md:p-8 max-w-2xl mx-auto space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-surface-900">Settings</h1>
-        <p className="text-surface-500 mt-1">Manage your profile and gym info</p>
+        <p className="text-surface-500 mt-1">Configure your gym and Gmail connection</p>
       </div>
 
       {saved && (
-        <div className="bg-success-50 border border-success-500/20 text-success-700 rounded-xl p-4 text-sm font-medium animate-fade-in">
+        <div className="bg-success-50 border border-success-500/20 text-success-700 rounded-xl p-4 text-sm font-medium">
           Settings saved!
         </div>
       )}
 
-      {/* Profile */}
+      {/* Gym info */}
       <Card>
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center">
-            <User className="w-5 h-5 text-brand-600" />
-          </div>
-          <div>
-            <CardTitle>Profile</CardTitle>
-            <CardDescription>Your personal information</CardDescription>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label="Full Name" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </div>
-
-        <div className="mt-4 flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-brand-100 flex items-center justify-center">
-            <span className="text-xl font-bold text-brand-700">{initials || "?"}</span>
-          </div>
-          <p className="text-xs text-surface-400">Your initials are shown in the app</p>
-        </div>
-      </Card>
-
-      {/* Business Info */}
-      <Card>
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center">
-            <Building2 className="w-5 h-5 text-accent-600" />
+            <Building2 className="w-5 h-5 text-brand-600" />
           </div>
           <div>
             <CardTitle>Gym Information</CardTitle>
-            <CardDescription>Details about your gym</CardDescription>
+            <CardDescription>Used to personalise every AI-generated reply</CardDescription>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label="Gym Name" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
-          <Input label="Website" type="url" placeholder="https://yourgym.com" />
-          <Input label="Phone" type="tel" placeholder="(555) 123-4567" />
+        <div className="space-y-4">
+          <Input
+            label="Gym Name"
+            value={gymName}
+            onChange={(e) => setGymName(e.target.value)}
+            placeholder="City Boxing Gym"
+          />
+          <Textarea
+            label="Gym Context"
+            value={gymContext}
+            onChange={(e) => setGymContext(e.target.value)}
+            rows={5}
+            placeholder={`Tell the AI about your gym. For example:
+- Two locations: Main St and West End
+- Classes: Boxing, Muay Thai, Sparring
+- Hours: Mon–Fri 6am–9pm, Sat–Sun 8am–6pm
+- Membership: $120/month or $30 casual
+- Friendly, community-focused gym`}
+          />
+          <p className="text-xs text-surface-400">
+            The more context you give, the better the AI replies will sound.
+          </p>
         </div>
       </Card>
 
+      {/* Gmail connection */}
+      <Card>
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-xl bg-surface-100 flex items-center justify-center">
+            <Mail className="w-5 h-5 text-surface-600" />
+          </div>
+          <div>
+            <CardTitle>Gmail Connection</CardTitle>
+            <CardDescription>Connect your gym&apos;s Gmail to read and send emails</CardDescription>
+          </div>
+        </div>
+
+        {settings?.gmail_email ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-4 bg-success-50 border border-success-200 rounded-xl">
+              <CheckCircle2 className="w-5 h-5 text-success-600 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-success-800">Connected</p>
+                <p className="text-sm text-success-700 truncate">{settings.gmail_email}</p>
+              </div>
+            </div>
+            {settings.gmail_last_synced_at && (
+              <p className="text-xs text-surface-400">
+                Last synced: {new Date(settings.gmail_last_synced_at).toLocaleString()}
+              </p>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              loading={disconnecting}
+              onClick={handleDisconnect}
+            >
+              Disconnect Gmail
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-4 bg-surface-50 border border-surface-200 rounded-xl">
+              <AlertCircle className="w-5 h-5 text-surface-400 shrink-0 mt-0.5" />
+              <div className="text-sm text-surface-600">
+                <p className="font-medium text-surface-800 mb-1">Gmail not connected</p>
+                <p>Connect your gym&apos;s Gmail account to pull in incoming emails and send replies directly from ClearPath.</p>
+              </div>
+            </div>
+            <a href="/api/gmail/auth">
+              <Button icon={<Mail className="w-4 h-4" />}>
+                Connect Gmail
+              </Button>
+            </a>
+            <p className="text-xs text-surface-400">
+              You&apos;ll need to set up a Google Cloud project with Gmail API enabled.{" "}
+              <span className="text-surface-600">See setup instructions below.</span>
+            </p>
+          </div>
+        )}
+      </Card>
+
+      {/* Setup instructions */}
+      {!settings?.gmail_email && (
+        <Card className="border-brand-100 bg-brand-50/30">
+          <CardTitle className="text-base mb-3">Gmail API Setup</CardTitle>
+          <ol className="text-sm text-surface-700 space-y-2 list-decimal list-inside">
+            <li>Go to <strong>console.cloud.google.com</strong> and create a project</li>
+            <li>Enable the <strong>Gmail API</strong> for that project</li>
+            <li>Go to <strong>Credentials → Create OAuth 2.0 Client ID</strong> (Web Application)</li>
+            <li>Add redirect URI: <code className="bg-white px-1.5 py-0.5 rounded text-xs border border-surface-200">{typeof window !== "undefined" ? window.location.origin : ""}/api/gmail/callback</code></li>
+            <li>Copy the Client ID and Client Secret into your Vercel environment variables as <code className="bg-white px-1 py-0.5 rounded text-xs border border-surface-200">GOOGLE_CLIENT_ID</code> and <code className="bg-white px-1 py-0.5 rounded text-xs border border-surface-200">GOOGLE_CLIENT_SECRET</code></li>
+            <li>Set <code className="bg-white px-1 py-0.5 rounded text-xs border border-surface-200">GOOGLE_REDIRECT_URI</code> to the same redirect URI above</li>
+            <li>Redeploy, then click <strong>Connect Gmail</strong></li>
+          </ol>
+        </Card>
+      )}
+
       <div className="flex justify-end">
-        <Button onClick={handleSave} icon={<Save className="w-4 h-4" />}>
+        <Button onClick={handleSave} loading={saving} icon={<Save className="w-4 h-4" />}>
           Save Changes
         </Button>
       </div>

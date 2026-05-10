@@ -41,10 +41,13 @@ function HeroSection() {
               so you can focus on coaching, not your inbox.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link href="/dashboard">
+              <Link href="/signup">
                 <Button size="lg" icon={<ArrowRight className="w-5 h-5" />}>
                   Get Started Free
                 </Button>
+              </Link>
+              <Link href="/login">
+                <Button variant="outline" size="lg">Log In</Button>
               </Link>
             </div>
             <div className="flex items-center justify-center gap-6 mt-8 text-sm text-surface-500">
@@ -178,7 +181,7 @@ function CTASection() {
             Ready to take back your time?
           </h2>
           <p className="text-surface-500 mb-8">Set up in under 5 minutes. No credit card required.</p>
-          <Link href="/dashboard">
+          <Link href="/signup">
             <Button size="lg" icon={<Mail className="w-5 h-5" />}>
               Start Replying Smarter
             </Button>

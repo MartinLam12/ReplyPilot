@@ -4,9 +4,9 @@ import { ClientLayout } from "./client-layout";
 import { connection } from "next/server";
 
 export const metadata: Metadata = {
-  title: "ClearPath — AI Readiness for Small Business",
+  title: "ClearPath — AI Email Assistant for Boxing Gyms",
   description:
-    "Discover where AI can create real value in your business. Get a tailored AI readiness report with prioritized recommendations and concrete next steps.",
+    "Reply to leads faster and follow up after every class. AI-drafted emails, Gmail integration, and automated follow-ups — built for boxing and martial arts gyms.",
 };
 
 export default async function RootLayout({

@@ -1,61 +1,72 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { createClient } from "@/lib/supabase/client";
+import type { User } from "@supabase/supabase-js";
 
 export interface UserProfile {
   name: string;
   email: string;
-  businessName: string;
-}
-
-const DEFAULT_PROFILE: UserProfile = { name: "", email: "", businessName: "" };
-const PROFILE_KEY = "clearpath_user_profile";
-
-function loadProfile(): UserProfile {
-  try {
-    const stored = localStorage.getItem(PROFILE_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch {
-    // ignore
-  }
-  return DEFAULT_PROFILE;
 }
 
 interface UserContextValue {
   user: UserProfile;
-  setUser: (profile: UserProfile) => void;
-  updateUser: (partial: Partial<UserProfile>) => void;
+  authUser: User | null;
   isLoggedIn: boolean;
   initials: string;
+  loading: boolean;
+  signOut: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextValue | undefined>(undefined);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
-  const [profile, setProfileState] = useState<UserProfile>(() => {
-    if (typeof window === "undefined") return DEFAULT_PROFILE;
-    return loadProfile();
-  });
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const setUser = useCallback((p: UserProfile) => {
-    setProfileState(p);
-    localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
-  }, []);
+  const supabase = (() => {
+    try { return createClient(); } catch { return null; }
+  })();
 
-  const updateUser = useCallback((partial: Partial<UserProfile>) => {
-    setProfileState((prev) => {
-      const next = { ...prev, ...partial };
-      localStorage.setItem(PROFILE_KEY, JSON.stringify(next));
-      return next;
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+
+    supabase.auth.getUser().then(({ data: { user } }: { data: { user: User | null } }) => {
+      setAuthUser(user);
+      setLoading(false);
     });
-  }, []);
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: string, session: { user: User } | null) => {
+      setAuthUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const signOut = useCallback(async () => {
+    if (supabase) await supabase.auth.signOut();
+    window.location.href = "/";
+  }, [supabase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const profile: UserProfile = {
+    name: authUser?.user_metadata?.name || "",
+    email: authUser?.email || "",
+  };
 
   const initials = profile.name
-    ? profile.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
-    : "";
+    ? profile.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)
+    : profile.email ? profile.email[0].toUpperCase() : "?";
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-surface-50">
+        <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
-    <UserContext.Provider value={{ user: profile, setUser, updateUser, isLoggedIn: true, initials }}>
+    <UserContext.Provider value={{ user: profile, authUser, isLoggedIn: !!authUser, initials, loading, signOut }}>
       {children}
     </UserContext.Provider>
   );

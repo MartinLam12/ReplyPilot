@@ -1,201 +1,483 @@
 "use client";
 
-import { useState } from "react";
-import { Button, Card, Input } from "@/components/ui";
-import { Sparkles, Copy, Check, Mail, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Button, Badge } from "@/components/ui";
+import { listThreads, getThreadDetail, archiveThread } from "@/app/actions/threads";
+import { approveGeneration, rejectGeneration } from "@/app/actions/ai-generations";
+import { cn } from "@/lib/utils";
+import type { EmailThread, EmailMessage, AIGeneration, EmailClassification } from "@/lib/types";
+import {
+  Mail,
+  RefreshCw,
+  Archive,
+  Send,
+  AlertTriangle,
+  ChevronLeft,
+  Sparkles,
+  X,
+} from "lucide-react";
 
-interface Draft {
-  subject: string;
-  body: string;
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function timeAgo(dateStr: string | null): string {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function senderName(thread: EmailThread): string {
+  if (thread.contact?.name) return thread.contact.name;
+  if (thread.contact?.email) return thread.contact.email.split("@")[0];
+  return "Unknown";
+}
+
+function statusBadge(status: EmailThread["status"]) {
+  if (status === "replied") return <Badge variant="success">Replied</Badge>;
+  if (status === "unread") return <Badge variant="brand">New</Badge>;
+  return null;
+}
+
+const RISK_BANNER: Record<string, { bg: string; text: string }> = {
+  high: {
+    bg: "bg-danger-50 border-danger-200 text-danger-800",
+    text: "This email may involve a complaint, billing issue, or cancellation. Please reply manually.",
+  },
+  medium: {
+    bg: "bg-yellow-50 border-yellow-200 text-yellow-800",
+    text: "Review this draft carefully before sending.",
+  },
+};
+
+// ─── Main page ───────────────────────────────────────────────────────────────
+
 export default function InboxPage() {
-  const [fromEmail, setFromEmail] = useState("");
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
-  const [gymName, setGymName] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem("gym_name") || "" : ""
-  );
-  const [gymContext, setGymContext] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem("gym_context") || "" : ""
-  );
-  const [showSettings, setShowSettings] = useState(false);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [threads, setThreads] = useState<EmailThread[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<EmailThread | null>(null);
+  const [loadingThreads, setLoadingThreads] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [mobileView, setMobileView] = useState<"list" | "thread">("list");
 
-  const saveSettings = () => {
-    localStorage.setItem("gym_name", gymName);
-    localStorage.setItem("gym_context", gymContext);
-    setShowSettings(false);
+  const loadThreads = useCallback(async () => {
+    setLoadingThreads(true);
+    const data = await listThreads();
+    setThreads(data);
+    setLoadingThreads(false);
+  }, []);
+
+  useEffect(() => {
+    loadThreads();
+  }, [loadThreads]);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    await fetch("/api/gmail/sync", { method: "POST" });
+    await loadThreads();
+    setSyncing(false);
   };
 
-  const handleDraft = async () => {
-    if (!body.trim()) {
-      setError("Please paste the email you received.");
-      return;
-    }
-    setError("");
-    setLoading(true);
-    setDraft(null);
+  const handleSelectThread = async (thread: EmailThread) => {
+    setSelectedId(thread.id);
+    setMobileView("thread");
+    setDetail(null);
+    const data = await getThreadDetail(thread.id);
+    setDetail(data);
+  };
 
-    try {
-      const res = await fetch("/api/draft-reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fromEmail, subject, body, gymName, gymContext }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to draft reply");
-      setDraft(data);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
-    } finally {
-      setLoading(false);
+  const handleArchive = async (threadId: string) => {
+    await archiveThread(threadId);
+    setThreads((prev) => prev.filter((t) => t.id !== threadId));
+    if (selectedId === threadId) {
+      setSelectedId(null);
+      setDetail(null);
+      setMobileView("list");
     }
   };
 
-  const handleCopy = () => {
-    if (!draft) return;
-    navigator.clipboard.writeText(draft.body);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleOpenInGmail = () => {
-    if (!draft) return;
-    const params = new URLSearchParams({
-      to: fromEmail,
-      su: draft.subject,
-      body: draft.body,
-    });
-    window.open(`https://mail.google.com/mail/?view=cm&fs=1&${params.toString()}`, "_blank");
+  const handleThreadUpdate = async () => {
+    if (selectedId) {
+      const data = await getThreadDetail(selectedId);
+      setDetail(data);
+    }
+    await loadThreads();
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-900">Email Reply Tool</h1>
-          <p className="text-surface-500 mt-1">Paste an incoming email and get an AI-drafted reply.</p>
+    <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
+      {/* Thread list */}
+      <div className={cn(
+        "w-full lg:w-80 xl:w-96 flex-shrink-0 border-r border-surface-100 bg-white flex flex-col",
+        mobileView === "thread" && "hidden lg:flex"
+      )}>
+        <div className="p-4 border-b border-surface-100 flex items-center justify-between">
+          <h1 className="text-lg font-bold text-surface-900">Inbox</h1>
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={syncing}
+            onClick={handleSync}
+            icon={<RefreshCw className="w-4 h-4" />}
+          >
+            Sync
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowSettings(!showSettings)}
-          icon={showSettings ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-        >
-          Gym settings
-        </Button>
+
+        {loadingThreads ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : threads.length === 0 ? (
+          <EmptyInbox onSync={handleSync} syncing={syncing} />
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            {threads.map((thread) => (
+              <button
+                key={thread.id}
+                onClick={() => handleSelectThread(thread)}
+                className={cn(
+                  "w-full text-left px-4 py-4 border-b border-surface-50 hover:bg-surface-50 transition-colors",
+                  selectedId === thread.id && "bg-brand-50 border-l-2 border-l-brand-500"
+                )}
+              >
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <span className="font-medium text-surface-900 text-sm truncate">
+                    {senderName(thread)}
+                  </span>
+                  <span className="text-xs text-surface-400 shrink-0">
+                    {timeAgo(thread.last_message_at)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm text-surface-600 truncate">{thread.subject}</p>
+                  {statusBadge(thread.status)}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {showSettings && (
-        <Card className="p-5 space-y-4 border-brand-200 bg-brand-50/30">
-          <p className="text-sm font-medium text-surface-700">
-            These details are used to personalise every reply.
-          </p>
-          <div>
-            <label className="block text-sm font-medium text-surface-700 mb-1">Gym name</label>
-            <Input
-              value={gymName}
-              onChange={(e) => setGymName(e.target.value)}
-              placeholder="e.g. Corner Boxing"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-surface-700 mb-1">
-              Extra context <span className="text-surface-400 font-normal">(optional)</span>
-            </label>
-            <textarea
-              value={gymContext}
-              onChange={(e) => setGymContext(e.target.value)}
-              placeholder="e.g. We have two locations in Brooklyn and Queens. Classes run Mon–Sat. Membership starts at $120/month."
-              className="w-full rounded-xl border border-surface-200 px-4 py-3 text-sm text-surface-900 placeholder:text-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-300 resize-none h-24"
-            />
-          </div>
-          <Button size="sm" onClick={saveSettings}>Save settings</Button>
-        </Card>
-      )}
-
-      <Card className="p-5 space-y-4">
-        <h2 className="font-semibold text-surface-900 flex items-center gap-2">
-          <Mail className="w-4 h-4 text-surface-400" />
-          Incoming email
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-surface-700 mb-1">From</label>
-            <Input
-              value={fromEmail}
-              onChange={(e) => setFromEmail(e.target.value)}
-              placeholder="sender@email.com"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-surface-700 mb-1">Subject</label>
-            <Input
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              placeholder="Membership inquiry"
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-surface-700 mb-1">Email body</label>
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="Paste the full email you received here..."
-            className="w-full rounded-xl border border-surface-200 px-4 py-3 text-sm text-surface-900 placeholder:text-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-300 resize-none h-40"
-          />
-        </div>
-        {error && <p className="text-sm text-danger-600">{error}</p>}
-        <Button
-          onClick={handleDraft}
-          loading={loading}
-          icon={<Sparkles className="w-4 h-4" />}
-          className="w-full"
-        >
-          {loading ? "Drafting reply…" : "Draft Reply"}
-        </Button>
-      </Card>
-
-      {draft && (
-        <Card className="p-5 space-y-4 border-brand-200">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-surface-900 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-brand-500" />
-              AI-drafted reply
-            </h2>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={handleCopy} icon={copied ? <Check className="w-4 h-4 text-success-600" /> : <Copy className="w-4 h-4" />}>
-                {copied ? "Copied" : "Copy"}
-              </Button>
-              <Button size="sm" onClick={handleOpenInGmail} icon={<ExternalLink className="w-4 h-4" />}>
-                Open in Gmail
-              </Button>
+      {/* Thread detail */}
+      <div className={cn(
+        "flex-1 flex flex-col bg-surface-50 min-w-0",
+        mobileView === "list" && "hidden lg:flex"
+      )}>
+        {!selectedId ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+            <div className="w-16 h-16 rounded-2xl bg-brand-50 flex items-center justify-center mb-4">
+              <Mail className="w-8 h-8 text-brand-400" />
             </div>
+            <p className="text-surface-500 text-sm">Select an email to read and reply</p>
           </div>
-          <div>
-            <p className="text-xs text-surface-400 uppercase font-medium mb-1">Subject</p>
-            <p className="text-sm font-medium text-surface-800 bg-surface-50 rounded-lg px-3 py-2">
-              {draft.subject}
-            </p>
+        ) : !detail ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
           </div>
-          <div>
-            <p className="text-xs text-surface-400 uppercase font-medium mb-1">Body</p>
-            <textarea
-              value={draft.body}
-              onChange={(e) => setDraft({ ...draft, body: e.target.value })}
-              className="w-full rounded-xl border border-surface-200 px-4 py-3 text-sm text-surface-900 focus:outline-none focus:ring-2 focus:ring-brand-300 resize-none h-48"
-            />
+        ) : (
+          <ThreadView
+            thread={detail}
+            onArchive={handleArchive}
+            onUpdate={handleThreadUpdate}
+            onBack={() => setMobileView("list")}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Thread view ─────────────────────────────────────────────────────────────
+
+function ThreadView({
+  thread,
+  onArchive,
+  onUpdate,
+  onBack,
+}: {
+  thread: EmailThread;
+  onArchive: (id: string) => void;
+  onUpdate: () => Promise<void>;
+  onBack: () => void;
+}) {
+  const [classifying, setClassifying] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [classification, setClassification] = useState<EmailClassification | null>(null);
+  const [draftBody, setDraftBody] = useState(thread.latest_generation?.generated_body || "");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(thread.latest_generation?.status === "sent");
+  const [generation, setGeneration] = useState<AIGeneration | null>(
+    thread.latest_generation || null
+  );
+
+  const messages = thread.messages || [];
+  const lastInbound = [...messages].reverse().find((m) => m.direction === "inbound");
+  const replyTo = thread.contact?.email || lastInbound?.from_email || "";
+
+  const handleGenerate = async () => {
+    setClassifying(true);
+    const lastMsg = messages[messages.length - 1];
+    const classifyRes = await fetch("/api/ai/classify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subject: thread.subject, body: lastMsg?.body_text }),
+    });
+    const cls: EmailClassification = await classifyRes.json();
+    setClassification(cls);
+    setClassifying(false);
+
+    if (cls.risk_level === "high") return;
+
+    setGenerating(true);
+    const replyRes = await fetch("/api/ai/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId: thread.id,
+        subject: thread.subject,
+        messages,
+        classification: cls,
+      }),
+    });
+    const data = await replyRes.json();
+    setGeneration(data.generation);
+    setDraftBody(data.body || "");
+    setGenerating(false);
+  };
+
+  const handleSend = async () => {
+    if (!draftBody.trim() || !replyTo) return;
+    setSending(true);
+
+    await fetch("/api/gmail/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId: thread.id,
+        gmailThreadId: thread.gmail_thread_id,
+        to: replyTo,
+        subject: generation?.generated_subject || `Re: ${thread.subject}`,
+        body: draftBody,
+      }),
+    });
+
+    if (generation) {
+      await approveGeneration(generation.id, draftBody, thread.id);
+    }
+
+    setSent(true);
+    setSending(false);
+    await onUpdate();
+  };
+
+  const handleReject = async () => {
+    if (generation) await rejectGeneration(generation.id);
+    setGeneration(null);
+    setDraftBody("");
+    setClassification(null);
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="bg-white border-b border-surface-100 px-4 py-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <button onClick={onBack} className="lg:hidden p-1 text-surface-500 hover:text-surface-900">
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div className="min-w-0">
+            <p className="font-semibold text-surface-900 text-sm truncate">{thread.subject}</p>
+            <p className="text-xs text-surface-500">{senderName(thread)} · {replyTo}</p>
           </div>
-          <p className="text-xs text-surface-400">
-            Edit the reply above before sending. Click &quot;Open in Gmail&quot; to send it directly.
-          </p>
-        </Card>
+        </div>
+        <button
+          onClick={() => onArchive(thread.id)}
+          className="p-2 text-surface-400 hover:text-surface-700 hover:bg-surface-100 rounded-lg transition-colors shrink-0"
+          title="Archive"
+        >
+          <Archive className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.map((msg) => (
+          <MessageBubble key={msg.id} message={msg} />
+        ))}
+      </div>
+
+      {/* Reply panel */}
+      <div className="bg-white border-t border-surface-100 p-4">
+        {sent ? (
+          <div className="flex items-center gap-2 text-sm text-success-700 bg-success-50 border border-success-200 rounded-xl px-4 py-3">
+            <span>✓</span>
+            <span>Reply sent</span>
+          </div>
+        ) : (
+          <ReplyPanel
+            classification={classification}
+            classifying={classifying}
+            generating={generating}
+            generation={generation}
+            draftBody={draftBody}
+            setDraftBody={setDraftBody}
+            sending={sending}
+            onGenerate={handleGenerate}
+            onSend={handleSend}
+            onReject={handleReject}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Message bubble ───────────────────────────────────────────────────────────
+
+function MessageBubble({ message }: { message: EmailMessage }) {
+  const isOutbound = message.direction === "outbound";
+  return (
+    <div className={cn("flex", isOutbound ? "justify-end" : "justify-start")}>
+      <div className={cn(
+        "max-w-[80%] rounded-2xl px-4 py-3 text-sm",
+        isOutbound
+          ? "bg-brand-600 text-white rounded-br-sm"
+          : "bg-white border border-surface-200 text-surface-800 rounded-bl-sm"
+      )}>
+        <p className={cn("text-xs mb-1 font-medium", isOutbound ? "text-brand-200" : "text-surface-400")}>
+          {isOutbound ? "You" : message.from_email}
+        </p>
+        <p className="whitespace-pre-wrap leading-relaxed">{message.body_text}</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Reply panel ─────────────────────────────────────────────────────────────
+
+function ReplyPanel({
+  classification,
+  classifying,
+  generating,
+  generation,
+  draftBody,
+  setDraftBody,
+  sending,
+  onGenerate,
+  onSend,
+  onReject,
+}: {
+  classification: EmailClassification | null;
+  classifying: boolean;
+  generating: boolean;
+  generation: AIGeneration | null;
+  draftBody: string;
+  setDraftBody: (v: string) => void;
+  sending: boolean;
+  onGenerate: () => void;
+  onSend: () => void;
+  onReject: () => void;
+}) {
+  const riskInfo = classification ? RISK_BANNER[classification.risk_level] : null;
+
+  if (classifying) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-surface-500">
+        <div className="w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+        Analysing email…
+      </div>
+    );
+  }
+
+  if (classification?.risk_level === "high") {
+    return (
+      <div className={cn("flex gap-3 p-4 rounded-xl border text-sm", riskInfo?.bg)}>
+        <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+        <div>
+          <p className="font-semibold mb-1">Manual reply needed</p>
+          <p className="text-xs opacity-80">{riskInfo?.text}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!generation && !generating) {
+    return (
+      <Button onClick={onGenerate} icon={<Sparkles className="w-4 h-4" />}>
+        Suggest a Reply
+      </Button>
+    );
+  }
+
+  if (generating) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-surface-500">
+        <div className="w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+        Drafting reply…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {riskInfo && classification?.risk_level === "medium" && (
+        <div className={cn("flex gap-2 px-3 py-2 rounded-xl border text-xs", riskInfo.bg)}>
+          <span>⚠️</span>
+          <span>{riskInfo.text}</span>
+        </div>
       )}
+
+      <div className="relative">
+        <textarea
+          value={draftBody}
+          onChange={(e) => setDraftBody(e.target.value)}
+          rows={6}
+          className="w-full px-3.5 py-2.5 rounded-xl border border-surface-300 bg-surface-50 text-surface-900 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+          placeholder="Edit your reply…"
+        />
+        {generation && (
+          <span className="absolute top-2 right-2 flex items-center gap-1 text-xs text-brand-500 bg-brand-50 px-1.5 py-0.5 rounded-md pointer-events-none">
+            <Sparkles className="w-3 h-3" />
+            AI draft
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button
+          onClick={onSend}
+          loading={sending}
+          disabled={!draftBody.trim()}
+          icon={<Send className="w-4 h-4" />}
+        >
+          Send Reply
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onReject} icon={<X className="w-4 h-4" />}>
+          Clear
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Empty state ──────────────────────────────────────────────────────────────
+
+function EmptyInbox({ onSync, syncing }: { onSync: () => void; syncing: boolean }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+      <div className="w-16 h-16 rounded-2xl bg-surface-100 flex items-center justify-center mb-4">
+        <Mail className="w-8 h-8 text-surface-400" />
+      </div>
+      <p className="text-surface-700 font-medium mb-1">No emails yet</p>
+      <p className="text-surface-400 text-sm mb-6">
+        Connect Gmail in Settings, then sync to pull in your inbox.
+      </p>
+      <Button variant="outline" size="sm" onClick={onSync} loading={syncing} icon={<RefreshCw className="w-4 h-4" />}>
+        Sync Now
+      </Button>
     </div>
   );
 }

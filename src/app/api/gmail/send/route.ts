@@ -1,0 +1,55 @@
+import { NextResponse } from "next/server";
+import { google } from "googleapis";
+import { createClient } from "@/lib/supabase/server";
+
+export async function POST(request: Request) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { threadId, gmailThreadId, to, subject, body } = await request.json();
+
+  const { data: settings } = await supabase
+    .from("gym_settings")
+    .select("gmail_refresh_token, gmail_email")
+    .eq("user_id", user.id)
+    .single();
+
+  if (!settings?.gmail_refresh_token) {
+    return NextResponse.json({ error: "Gmail not connected" }, { status: 400 });
+  }
+
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+  oauth2Client.setCredentials({ refresh_token: settings.gmail_refresh_token });
+  const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+  const raw = [
+    `From: ${settings.gmail_email}`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    `Content-Type: text/plain; charset=utf-8`,
+    `MIME-Version: 1.0`,
+    ``,
+    body,
+  ].join("\r\n");
+
+  await gmail.users.messages.send({
+    userId: "me",
+    requestBody: {
+      raw: Buffer.from(raw).toString("base64url"),
+      threadId: gmailThreadId,
+    },
+  });
+
+  // Mark thread as replied
+  await supabase
+    .from("email_threads")
+    .update({ status: "replied" })
+    .eq("id", threadId);
+
+  return NextResponse.json({ success: true });
+}
