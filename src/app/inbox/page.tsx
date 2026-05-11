@@ -244,6 +244,7 @@ function ThreadView({
   onBack: () => void;
 }) {
   const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState(false);
   const [classification, setClassification] = useState<EmailClassification | null>(null);
   const [draftBody, setDraftBody] = useState(thread.latest_generation?.generated_body || "");
   const [sending, setSending] = useState(false);
@@ -259,6 +260,7 @@ function ThreadView({
   const handleGenerate = async () => {
     setGenerating(true);
     setDraftBody("");
+    setGenerateError(false);
 
     const res = await fetch("/api/ai/generate", {
       method: "POST",
@@ -280,6 +282,7 @@ function ThreadView({
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let gotText = false;
 
     try {
       while (true) {
@@ -296,20 +299,26 @@ function ThreadView({
           if (!payload) continue;
 
           try {
-            const obj = JSON.parse(payload) as { type: string; classification?: EmailClassification; subject?: string; value?: string };
+            const obj = JSON.parse(payload) as { type: string; classification?: EmailClassification; value?: string };
             if (obj.type === "meta") {
               if (obj.classification) setClassification(obj.classification);
             } else if (obj.type === "text" && obj.value) {
               setDraftBody((prev) => prev + obj.value);
-              setGenerating(false); // show textarea on first chunk
+              setGenerating(false);
+              gotText = true;
+            } else if (obj.type === "error") {
+              setGenerateError(true);
             }
           } catch {
             // malformed chunk — skip
           }
         }
       }
+    } catch {
+      setGenerateError(true);
     } finally {
       setGenerating(false);
+      if (!gotText) setGenerateError(true);
     }
   };
 
@@ -385,6 +394,7 @@ function ThreadView({
           <ReplyPanel
             classification={classification}
             generating={generating}
+            generateError={generateError}
             generation={generation}
             draftBody={draftBody}
             setDraftBody={setDraftBody}
@@ -546,6 +556,7 @@ function MessageBubble({ message }: { message: EmailMessage }) {
 function ReplyPanel({
   classification,
   generating,
+  generateError,
   generation,
   draftBody,
   setDraftBody,
@@ -556,6 +567,7 @@ function ReplyPanel({
 }: {
   classification: EmailClassification | null;
   generating: boolean;
+  generateError: boolean;
   generation: AIGeneration | null;
   draftBody: string;
   setDraftBody: (v: string) => void;
@@ -580,9 +592,14 @@ function ReplyPanel({
 
   if (!generation && !generating && !draftBody.trim()) {
     return (
-      <Button onClick={onGenerate} icon={<Sparkles className="w-4 h-4" />}>
-        Suggest a Reply
-      </Button>
+      <div className="flex flex-col gap-2">
+        {generateError && (
+          <p className="text-xs text-danger-600">Failed to generate a draft. Try again.</p>
+        )}
+        <Button onClick={onGenerate} icon={<Sparkles className="w-4 h-4" />}>
+          Suggest a Reply
+        </Button>
+      </div>
     );
   }
 
