@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@/lib/supabase/server";
-import type { EmailMessage } from "@/lib/types";
+import type { EmailClassification, EmailMessage } from "@/lib/types";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
@@ -18,6 +18,87 @@ function toPlainText(text: string): string {
     .replace(/&amp;/g, "&")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function quickClassify(subject: string, context: string): EmailClassification {
+  const haystack = `${subject}\n${context}`.toLowerCase();
+
+  const cancellation = /(cancel|cancellation|refund|chargeback|stop membership|terminate|quit)/.test(
+    haystack
+  );
+  const complaint = /(angry|upset|terrible|awful|bad service|frustrat|disappointed|unhappy)/.test(
+    haystack
+  );
+  const billing = /(bill|billing|charged|charge|payment|invoice|price wrong|overcharged)/.test(
+    haystack
+  );
+
+  if (cancellation) {
+    return {
+      type: "cancellation",
+      risk_level: "high",
+      confidence: 0.92,
+      contact_type_guess: "member",
+      summary: "Potential cancellation request requiring manual handling.",
+    };
+  }
+
+  if (complaint) {
+    return {
+      type: "complaint",
+      risk_level: "high",
+      confidence: 0.9,
+      contact_type_guess: "member",
+      summary: "Potential complaint requiring a careful manual response.",
+    };
+  }
+
+  if (billing) {
+    return {
+      type: "billing",
+      risk_level: "high",
+      confidence: 0.9,
+      contact_type_guess: "member",
+      summary: "Potential billing issue requiring manual review.",
+    };
+  }
+
+  const classInquiry = /(class|schedule|time|coach|instructor|session|availability)/.test(haystack);
+  const leadInquiry = /(trial|free trial|join|membership|price|pricing|plans|sign up|drop in)/.test(
+    haystack
+  );
+
+  if (classInquiry) {
+    return {
+      type: "class_inquiry",
+      risk_level: "low",
+      confidence: 0.84,
+      contact_type_guess: "unknown",
+      summary: "Class details or scheduling question.",
+    };
+  }
+
+  if (leadInquiry) {
+    return {
+      type: "lead_inquiry",
+      risk_level: "low",
+      confidence: 0.86,
+      contact_type_guess: "lead",
+      summary: "Lead or trial inquiry.",
+    };
+  }
+
+  return {
+    type: "general",
+    risk_level: "low",
+    confidence: 0.75,
+    contact_type_guess: "unknown",
+    summary: "General inbound message.",
+  };
+}
+
+function stripFences(text: string): string {
+  return text.replace(/^```[a-zA-Z]*\n?/g, "").replace(/```$/g, "").trim();
 }
 
 export async function POST(request: Request) {
@@ -41,82 +122,61 @@ export async function POST(request: Request) {
   const gymContext = settings?.gym_context || "";
 
   const conversationContext = (messages || [])
-    .slice(-5)
+    .slice(-3)
     .map((m: EmailMessage) =>
-      `${m.direction === "inbound" ? "THEM" : "US"}: ${toPlainText(m.body_text || "").slice(0, 400)}`
+      `${m.direction === "inbound" ? "THEM" : "US"}: ${toPlainText(m.body_text || "").slice(0, 260)}`
     )
     .join("\n\n");
 
   const cleanSubject = (subject || "").replace(/^Re:\s*/i, "");
 
-  const prompt = `You are helping ${gymName}, a boxing/martial arts gym, manage their inbox.
-${gymContext ? `Gym context: ${gymContext}\n` : ""}
-Email subject: ${subject || "(no subject)"}
+  const classification = quickClassify(subject || "", conversationContext);
+
+  if (classification.risk_level === "high") {
+    return NextResponse.json({
+      classification,
+      generation: null,
+      subject: `Re: ${cleanSubject}`,
+      body: "",
+    });
+  }
+
+  const prompt = `Write a short reply for ${gymName}, a boxing/martial arts gym.
+${gymContext ? `Gym context: ${gymContext}` : ""}
+
+Subject: ${subject || "(no subject)"}
 Conversation:
 ${conversationContext}
 
-Task: classify this email AND write a short reply.
+Rules:
+- Under 85 words
+- Friendly and warm, like a coach
+- Include one clear next step/question
+- No markdown, no JSON, no greeting repetition
 
-Classification rules:
-- complaint, billing dispute, or cancellation request → risk_level: "high" (no reply needed)
-- lead inquiry, trial booking, class question → risk_level: "low"
-- everything else → risk_level: "low" or "medium"
-
-Reply rules (skip if high risk):
-- Under 100 words
-- Friendly and warm, like a coach talking to someone
-- End with a clear next step or question
-- No corporate language
-
-Respond with valid JSON only (no markdown):
-{
-  "type": "lead_inquiry|complaint|billing|cancellation|general|class_inquiry",
-  "risk_level": "low|medium|high",
-  "confidence": 0.85,
-  "contact_type_guess": "lead|trial|member|unknown",
-  "summary": "one sentence plain English",
-  "reply_subject": "Re: ${cleanSubject}",
-  "reply_body": "reply text, or empty string if high risk"
-}`;
+Return only the reply body text.`;
 
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
   const result = await model.generateContent({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { maxOutputTokens: 500 },
+    generationConfig: { maxOutputTokens: 220, temperature: 0.4 },
   });
 
-  const text = result.response.text().trim();
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-
-  const defaults = {
-    type: "general" as const,
-    risk_level: "low" as "low" | "medium" | "high",
-    confidence: 0.8,
-    contact_type_guess: "unknown" as const,
-    summary: "",
-    reply_subject: `Re: ${cleanSubject}`,
-    reply_body: "",
-  };
-
-  let parsed = { ...defaults };
-  if (jsonMatch) {
-    try {
-      parsed = { ...defaults, ...JSON.parse(jsonMatch[0]) };
-    } catch { /* use defaults */ }
-  }
+  const replyBody = stripFences(result.response.text() || "").trim();
+  const replySubject = `Re: ${cleanSubject}`;
 
   let generation = null;
-  if (parsed.risk_level !== "high" && parsed.reply_body) {
+  if (replyBody) {
     const { data } = await supabase
       .from("ai_generations")
       .insert({
         user_id: user.id,
         thread_id: threadId,
         type: "reply",
-        generated_subject: parsed.reply_subject,
-        generated_body: parsed.reply_body,
-        confidence: parsed.confidence,
-        risk_level: parsed.risk_level,
+        generated_subject: replySubject,
+        generated_body: replyBody,
+        confidence: classification.confidence,
+        risk_level: classification.risk_level,
         status: "pending",
       })
       .select()
@@ -125,15 +185,9 @@ Respond with valid JSON only (no markdown):
   }
 
   return NextResponse.json({
-    classification: {
-      type: parsed.type,
-      risk_level: parsed.risk_level,
-      confidence: parsed.confidence,
-      contact_type_guess: parsed.contact_type_guess,
-      summary: parsed.summary,
-    },
+    classification,
     generation,
-    subject: parsed.reply_subject,
-    body: parsed.reply_body,
+    subject: replySubject,
+    body: replyBody,
   });
 }
