@@ -268,12 +268,13 @@ function ThreadView({
       body: JSON.stringify({ threadId: thread.id, subject: thread.subject, messages }),
     });
 
-    // High-risk path returns plain JSON, not a stream
+    // Route always returns JSON now
     if (!res.headers.get("content-type")?.includes("text/event-stream")) {
       const data = await res.json();
       setClassification(data.classification);
       setGeneration(data.generation);
       setDraftBody(data.body || "");
+      if (data.error || !data.body) setGenerateError(true);
       setGenerating(false);
       return;
     }

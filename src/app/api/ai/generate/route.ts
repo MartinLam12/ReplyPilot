@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { EmailClassification, EmailMessage } from "@/lib/types";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // ─── Classification ───────────────────────────────────────────────────────────
 
@@ -22,7 +23,7 @@ function quickClassify(subject: string, context: string): EmailClassification {
   return { type: "general", risk_level: "low", confidence: 0.75, contact_type_guess: "unknown", summary: "General inbound message." };
 }
 
-// ─── Tone guide per classification (template selector) ────────────────────────
+// ─── Tone guide per classification ────────────────────────────────────────────
 
 const TONE: Record<string, string> = {
   class_inquiry: "helpful — answer the schedule/class question directly",
@@ -30,7 +31,7 @@ const TONE: Record<string, string> = {
   general: "friendly and professional, like a helpful coach",
 };
 
-// ─── Context builder ──────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function toPlainText(text: string): string {
   const raw = (text || "").slice(0, 800);
@@ -48,6 +49,10 @@ function toPlainText(text: string): string {
     .trim();
 }
 
+function stripFences(text: string): string {
+  return text.replace(/^```[a-zA-Z]*\n?/g, "").replace(/```$/g, "").trim();
+}
+
 // ─── Route ────────────────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
@@ -61,10 +66,11 @@ export async function POST(request: Request) {
     messages: EmailMessage[];
   };
 
-  // Fetch gym settings and build context in parallel
-  const [{ data: settings }] = await Promise.all([
-    supabase.from("gym_settings").select("gym_name, gym_context").eq("user_id", user.id).single(),
-  ]);
+  const { data: settings } = await supabase
+    .from("gym_settings")
+    .select("gym_name, gym_context")
+    .eq("user_id", user.id)
+    .single();
 
   const gymName = settings?.gym_name || "our gym";
   const gymContext = settings?.gym_context || "";
@@ -78,7 +84,6 @@ export async function POST(request: Request) {
   const classification = quickClassify(subject || "", conversationSnippet);
   const replySubject = `Re: ${cleanSubject}`;
 
-  // High-risk: return immediately, no LLM call
   if (classification.risk_level === "high") {
     return NextResponse.json({ classification, generation: null, subject: replySubject, body: "" });
   }
@@ -92,40 +97,18 @@ ${conversationSnippet}
 
 Under 85 words. Friendly, like a coach. End with one clear next step. Write only the reply body — no subject line.`;
 
-  const encoder = new TextEncoder();
-
-  // The LLM call is inside start() so the Response (and its headers) are
-  // returned to the client immediately — fetch() unblocks right away.
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (obj: object) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
-
-      send({ type: "meta", classification, subject: replySubject });
-
-      try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const result = await model.generateContent({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 130, temperature: 0.3 },
-        });
-        const body = result.response.text().trim();
-        if (body) send({ type: "text", value: body });
-      } catch (err) {
-        console.error("[generate] LLM error:", err);
-        send({ type: "error" });
-      }
-
-      send({ type: "done" });
-      controller.close();
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "X-Accel-Buffering": "no",
-    },
-  });
+  try {
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 130, temperature: 0.3 },
+    });
+    const body = stripFences(result.response.text() || "").trim();
+    return NextResponse.json({ classification, generation: null, subject: replySubject, body });
+  } catch (err) {
+    console.error("[generate] LLM error:", err);
+    return NextResponse.json(
+      { classification, generation: null, subject: replySubject, body: "", error: true },
+      { status: 500 }
+    );
+  }
 }
