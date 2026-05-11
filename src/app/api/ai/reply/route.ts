@@ -5,6 +5,21 @@ import type { EmailClassification, EmailMessage } from "@/lib/types";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
+function toPlainText(text: string): string {
+  if (!text.trimStart().startsWith("<")) return text;
+  return text
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -29,7 +44,7 @@ export async function POST(request: Request) {
   const conversationContext = (messages || [])
     .slice(-5)
     .map((m: EmailMessage) =>
-      `${m.direction === "inbound" ? "THEM" : "US"}: ${(m.body_text || "").slice(0, 400)}`
+      `${m.direction === "inbound" ? "THEM" : "US"}: ${toPlainText(m.body_text || "").slice(0, 400)}`
     )
     .join("\n\n");
 

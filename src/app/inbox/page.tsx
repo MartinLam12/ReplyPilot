@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button, Badge } from "@/components/ui";
 import { listThreads, getThreadDetail, archiveThread } from "@/app/actions/threads";
 import { approveGeneration, rejectGeneration } from "@/app/actions/ai-generations";
@@ -356,22 +356,78 @@ function ThreadView({
   );
 }
 
+// ─── HTML email iframe ────────────────────────────────────────────────────────
+
+function EmailHtmlFrame({ html }: { html: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const srcDoc = `<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<base target="_blank">
+<style>
+  *{box-sizing:border-box}
+  body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;margin:0;padding:16px;color:#333;word-wrap:break-word;overflow-wrap:break-word}
+  img{max-width:100%;height:auto}
+  a{color:#1a73e8}
+  table{max-width:100%}
+</style>
+</head><body>${html}</body></html>`;
+
+  const handleLoad = () => {
+    const doc = iframeRef.current?.contentDocument;
+    if (doc?.documentElement) {
+      iframeRef.current!.style.height = doc.documentElement.scrollHeight + "px";
+    }
+  };
+
+  return (
+    <iframe
+      ref={iframeRef}
+      srcDoc={srcDoc}
+      sandbox="allow-same-origin"
+      className="w-full border-0 block"
+      style={{ height: 200 }}
+      onLoad={handleLoad}
+      title="Email"
+    />
+  );
+}
+
 // ─── Message bubble ───────────────────────────────────────────────────────────
 
 function MessageBubble({ message }: { message: EmailMessage }) {
   const isOutbound = message.direction === "outbound";
+  const body = message.body_text || "";
+  const isHtml = body.trimStart().startsWith("<");
+
+  if (isOutbound) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-brand-600 text-white rounded-br-sm">
+          <p className="text-xs mb-1 font-medium text-brand-200">You</p>
+          <p className="whitespace-pre-wrap leading-relaxed break-words">{cleanBody(body)}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isHtml) {
+    return (
+      <div>
+        <p className="text-xs font-medium text-surface-400 px-1 mb-1">{message.from_email}</p>
+        <div className="bg-white border border-surface-200 rounded-xl overflow-hidden">
+          <EmailHtmlFrame html={body} />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={cn("flex", isOutbound ? "justify-end" : "justify-start")}>
-      <div className={cn(
-        "max-w-[80%] rounded-2xl px-4 py-3 text-sm",
-        isOutbound
-          ? "bg-brand-600 text-white rounded-br-sm"
-          : "bg-white border border-surface-200 text-surface-800 rounded-bl-sm"
-      )}>
-        <p className={cn("text-xs mb-1 font-medium", isOutbound ? "text-brand-200" : "text-surface-400")}>
-          {isOutbound ? "You" : message.from_email}
-        </p>
-        <p className="whitespace-pre-wrap leading-relaxed break-words">{cleanBody(message.body_text)}</p>
+    <div className="flex justify-start">
+      <div className="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-white border border-surface-200 text-surface-800 rounded-bl-sm">
+        <p className="text-xs mb-1 font-medium text-surface-400">{message.from_email}</p>
+        <p className="whitespace-pre-wrap leading-relaxed break-words">{cleanBody(body)}</p>
       </div>
     </div>
   );

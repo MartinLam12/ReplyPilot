@@ -4,6 +4,21 @@ import { createClient } from "@/lib/supabase/server";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
+function toPlainText(text: string): string {
+  if (!text.trimStart().startsWith("<")) return text;
+  return text
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -16,7 +31,7 @@ export async function POST(request: Request) {
   const prompt = `Classify this email for a boxing/martial arts gym. Respond with valid JSON only, no markdown.
 
 Subject: ${subject || "(none)"}
-Body: ${(body || "").slice(0, 2000)}
+Body: ${toPlainText(body || "").slice(0, 2000)}
 
 Return this exact JSON shape:
 {
