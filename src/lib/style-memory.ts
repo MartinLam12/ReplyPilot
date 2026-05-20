@@ -145,18 +145,36 @@ function extractSignoff(text: string): string | null {
 }
 
 // ─── Embedding ────────────────────────────────────────────────────────────────
+//
+// Model: gemini-embedding-001 (text-embedding-004 was retired and now returns 404).
+// Native output is 3072 dims, but the schema stores vector(768) and the IVFFlat
+// index can't be rebuilt to >2000 dims. gemini-embedding-001 is trained with
+// Matryoshka Representation Learning, so truncating to the leading 768 dims
+// preserves quality — provided the vector is renormalized to unit length, which
+// is required for cosine-based pgvector ops to behave correctly.
+
+const EMBED_DIM = 768;
+
+function truncateAndRenormalize(values: number[], dim: number): number[] {
+  const sliced = values.slice(0, dim);
+  let sumSq = 0;
+  for (const v of sliced) sumSq += v * v;
+  const norm = Math.sqrt(sumSq);
+  if (norm === 0) return sliced;
+  return sliced.map((v) => v / norm);
+}
 
 export async function embedText(
   text: string,
   taskType: TaskType = TaskType.RETRIEVAL_DOCUMENT
 ): Promise<number[] | null> {
   try {
-    const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+    const model = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
     const result = await model.embedContent({
       content: { role: "user", parts: [{ text: text.slice(0, MAX_EMBED_CHARS) }] },
       taskType,
     });
-    return result.embedding.values;
+    return truncateAndRenormalize(result.embedding.values, EMBED_DIM);
   } catch (err) {
     console.error("[style] embed error:", err);
     return null;
