@@ -19,6 +19,7 @@ export default function SettingsPage() {
   const [exampleText, setExampleText] = useState("");
   const [addingExample, setAddingExample] = useState(false);
   const [exampleAdded, setExampleAdded] = useState(false);
+  const [exampleError, setExampleError] = useState<string | null>(null);
 
   useEffect(() => {
     getGymSettings().then((s) => {
@@ -45,24 +46,43 @@ export default function SettingsPage() {
   const handleAddExample = async () => {
     if (!exampleText.trim()) return;
     setAddingExample(true);
-    const res = await fetch("/api/style/add-sample", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body: exampleText }),
-    }).catch(() => null);
-    const data = res?.ok ? await res.json() : null;
-    setAddingExample(false);
-    if (data?.ok) {
-      setExampleText("");
-      setSampleCount(data.sampleCount);
-      setExampleAdded(true);
-      setTimeout(() => setExampleAdded(false), 3000);
+    setExampleError(null);
+
+    let res: Response | null = null;
+    try {
+      res = await fetch("/api/style/add-sample", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: exampleText }),
+      });
+    } catch (err) {
+      setAddingExample(false);
+      setExampleError(`Network error: ${err instanceof Error ? err.message : String(err)}`);
+      return;
     }
+
+    const data = await res.json().catch(() => null);
+    setAddingExample(false);
+
+    if (!res.ok || !data?.ok) {
+      setExampleError(data?.error || `Save failed (HTTP ${res.status})`);
+      return;
+    }
+
+    setExampleText("");
+    setSampleCount(data.sampleCount);
+    setExampleAdded(true);
+    setTimeout(() => setExampleAdded(false), 3000);
   };
 
   const handleSave = async () => {
     setSaving(true);
     await saveGymSettings(gymName, gymContext);
+    // Also save any pending writing style example — users expect the page-level
+    // Save button to commit everything on the page, not just the gym fields.
+    if (exampleText.trim()) {
+      await handleAddExample();
+    }
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
@@ -170,6 +190,13 @@ Coach Martin`}
             <div className="flex items-center gap-2 text-sm text-success-700 bg-success-50 border border-success-200 rounded-xl px-4 py-3">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               Example saved — style memory updated.
+            </div>
+          )}
+
+          {exampleError && (
+            <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="min-w-0 break-words">{exampleError}</div>
             </div>
           )}
 
