@@ -129,145 +129,181 @@ function parseEmailAddress(raw: string): { email: string; name: string | null } 
 // ─── Route ───────────────────────────────────────────────────────────────────
 
 export async function POST() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data: settings } = await supabase
-    .from("gym_settings")
-    .select("gmail_refresh_token, gmail_email")
-    .eq("user_id", user.id)
-    .single();
-
-  if (!settings?.gmail_refresh_token) {
-    return NextResponse.json({ error: "Gmail not connected" }, { status: 400 });
-  }
-
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
-  );
-  oauth2Client.setCredentials({ refresh_token: settings.gmail_refresh_token });
-  const gmail = google.gmail({ version: "v1", auth: oauth2Client });
-
-  const threadsResponse = await gmail.users.threads.list({
-    userId: "me",
-    maxResults: 30,
-    labelIds: ["INBOX"],
-    q: "newer_than:14d",
-  });
-
-  const threads = threadsResponse.data.threads ?? [];
-  let synced = 0;
-
-  for (const thread of threads) {
-    if (!thread.id) continue;
-
-    const threadDetail = await gmail.users.threads.get({
-      userId: "me",
-      id: thread.id,
-      format: "full",   // gives us the full decoded MIME tree
-    });
-
-    const messages = threadDetail.data.messages ?? [];
-    if (!messages.length) continue;
-
-    const firstMessage = messages[0];
-    const lastMessage = messages[messages.length - 1];
-    const subject =
-      headerVal(firstMessage.payload?.headers, "subject") || "(no subject)";
-    const lastDate = new Date(
-      parseInt(lastMessage.internalDate ?? "0")
-    ).toISOString();
-
-    const ownEmail = settings.gmail_email?.toLowerCase() ?? "";
-    const inboundMsg = messages.find((m) => {
-      const from = headerVal(m.payload?.headers, "from").toLowerCase();
-      return !from.includes(ownEmail);
-    });
-
-    const senderRaw =
-      headerVal(inboundMsg?.payload?.headers, "from") ||
-      headerVal(firstMessage.payload?.headers, "from");
-    const { email: senderEmail, name: senderName } = parseEmailAddress(senderRaw);
-
-    let contactId: string | null = null;
-    if (senderEmail && !senderEmail.toLowerCase().includes(ownEmail)) {
-      const { data: contact } = await supabase
-        .from("contacts")
-        .upsert(
-          { user_id: user.id, email: senderEmail, name: senderName },
-          { onConflict: "user_id,email" }
-        )
-        .select("id")
-        .single();
-      contactId = contact?.id ?? null;
-    }
-
-    const { data: upsertedThread } = await supabase
-      .from("email_threads")
-      .upsert(
-        {
-          user_id: user.id,
-          gmail_thread_id: thread.id,
-          contact_id: contactId,
-          subject,
-          last_message_at: lastDate,
-        },
-        { onConflict: "user_id,gmail_thread_id" }
-      )
-      .select("id")
-      .single();
-
-    if (!upsertedThread) continue;
-
-    for (const msg of messages) {
-      if (!msg.id) continue;
-
-      const fromRaw = headerVal(msg.payload?.headers, "from");
-      const toRaw = headerVal(msg.payload?.headers, "to");
-      const msgSubject = headerVal(msg.payload?.headers, "subject");
-      const sentAt = new Date(parseInt(msg.internalDate ?? "0")).toISOString();
-      const isOutbound = fromRaw.toLowerCase().includes(ownEmail);
-
-      // Walk MIME tree
-      const acc: WalkResult = { html: null, plain: null, cids: new Map() };
-      walk(msg.payload ?? undefined, acc);
-
-      let bodyText: string;
-      if (acc.html) {
-        // Inline CID images, sanitize, store raw HTML
-        const html = sanitize(applyCids(acc.html, acc.cids));
-        bodyText = html.slice(0, 200_000);
-      } else {
-        bodyText = (acc.plain ?? "").slice(0, 10_000);
-      }
-
-      await supabase.from("email_messages").upsert(
-        {
-          thread_id: upsertedThread.id,
-          gmail_message_id: msg.id,
-          direction: isOutbound ? "outbound" : "inbound",
-          from_email: fromRaw,
-          to_email: toRaw,
-          subject: msgSubject,
-          body_text: bodyText,
-          sent_at: sentAt,
-        },
-        { onConflict: "gmail_message_id" }
+    const missingEnv: string[] = [];
+    if (!process.env.GOOGLE_CLIENT_ID) missingEnv.push("GOOGLE_CLIENT_ID");
+    if (!process.env.GOOGLE_CLIENT_SECRET) missingEnv.push("GOOGLE_CLIENT_SECRET");
+    if (!process.env.GOOGLE_REDIRECT_URI) missingEnv.push("GOOGLE_REDIRECT_URI");
+    if (missingEnv.length) {
+      return NextResponse.json(
+        { error: `Missing env vars: ${missingEnv.join(", ")}` },
+        { status: 500 }
       );
     }
 
-    synced++;
+    const { data: settings } = await supabase
+      .from("gym_settings")
+      .select("gmail_refresh_token, gmail_email")
+      .eq("user_id", user.id)
+      .single();
+
+    if (!settings?.gmail_refresh_token) {
+      return NextResponse.json({ error: "Gmail not connected" }, { status: 400 });
+    }
+
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI
+    );
+    oauth2Client.setCredentials({ refresh_token: settings.gmail_refresh_token });
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+    const threadsResponse = await gmail.users.threads.list({
+      userId: "me",
+      maxResults: 30,
+      labelIds: ["INBOX"],
+      q: "newer_than:14d",
+    });
+
+    const threads = threadsResponse.data.threads ?? [];
+    let synced = 0;
+    const dropped: { gmailThreadId: string; reason: string }[] = [];
+
+    for (const thread of threads) {
+      if (!thread.id) {
+        dropped.push({ gmailThreadId: "(no id)", reason: "thread has no id" });
+        continue;
+      }
+
+      const threadDetail = await gmail.users.threads.get({
+        userId: "me",
+        id: thread.id,
+        format: "full",
+      });
+
+      const messages = threadDetail.data.messages ?? [];
+      if (!messages.length) {
+        dropped.push({ gmailThreadId: thread.id, reason: "no messages in thread" });
+        continue;
+      }
+
+      const firstMessage = messages[0];
+      const lastMessage = messages[messages.length - 1];
+      const subject =
+        headerVal(firstMessage.payload?.headers, "subject") || "(no subject)";
+      const lastDate = new Date(
+        parseInt(lastMessage.internalDate ?? "0")
+      ).toISOString();
+
+      const ownEmail = settings.gmail_email?.toLowerCase() ?? "";
+      const inboundMsg = messages.find((m) => {
+        const from = headerVal(m.payload?.headers, "from").toLowerCase();
+        return !from.includes(ownEmail);
+      });
+
+      const senderRaw =
+        headerVal(inboundMsg?.payload?.headers, "from") ||
+        headerVal(firstMessage.payload?.headers, "from");
+      const { email: senderEmail, name: senderName } = parseEmailAddress(senderRaw);
+
+      let contactId: string | null = null;
+      if (senderEmail && !senderEmail.toLowerCase().includes(ownEmail)) {
+        const { data: contact } = await supabase
+          .from("contacts")
+          .upsert(
+            { user_id: user.id, email: senderEmail, name: senderName },
+            { onConflict: "user_id,email" }
+          )
+          .select("id")
+          .single();
+        contactId = contact?.id ?? null;
+      }
+
+      const { data: upsertedThread, error: threadErr } = await supabase
+        .from("email_threads")
+        .upsert(
+          {
+            user_id: user.id,
+            gmail_thread_id: thread.id,
+            contact_id: contactId,
+            subject,
+            last_message_at: lastDate,
+          },
+          { onConflict: "user_id,gmail_thread_id" }
+        )
+        .select("id")
+        .single();
+
+      if (!upsertedThread) {
+        dropped.push({
+          gmailThreadId: thread.id,
+          reason: `thread upsert failed: ${threadErr?.message ?? "unknown"}`,
+        });
+        continue;
+      }
+
+      for (const msg of messages) {
+        if (!msg.id) continue;
+
+        const fromRaw = headerVal(msg.payload?.headers, "from");
+        const toRaw = headerVal(msg.payload?.headers, "to");
+        const msgSubject = headerVal(msg.payload?.headers, "subject");
+        const sentAt = new Date(parseInt(msg.internalDate ?? "0")).toISOString();
+        const isOutbound = fromRaw.toLowerCase().includes(ownEmail);
+
+        const acc: WalkResult = { html: null, plain: null, cids: new Map() };
+        walk(msg.payload ?? undefined, acc);
+
+        let bodyText: string;
+        if (acc.html) {
+          const html = sanitize(applyCids(acc.html, acc.cids));
+          bodyText = html.slice(0, 200_000);
+        } else {
+          bodyText = (acc.plain ?? "").slice(0, 10_000);
+        }
+
+        await supabase.from("email_messages").upsert(
+          {
+            thread_id: upsertedThread.id,
+            gmail_message_id: msg.id,
+            direction: isOutbound ? "outbound" : "inbound",
+            from_email: fromRaw,
+            to_email: toRaw,
+            subject: msgSubject,
+            body_text: bodyText,
+            sent_at: sentAt,
+          },
+          { onConflict: "gmail_message_id" }
+        );
+      }
+
+      synced++;
+    }
+
+    await supabase
+      .from("gym_settings")
+      .update({ gmail_last_synced_at: new Date().toISOString() })
+      .eq("user_id", user.id);
+
+    return NextResponse.json({
+      synced,
+      gmailThreadCount: threads.length,
+      resultSizeEstimate: threadsResponse.data.resultSizeEstimate ?? null,
+      dropped,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[gmail/sync] failed", err);
+    return NextResponse.json(
+      { error: message, name: err instanceof Error ? err.name : undefined },
+      { status: 500 }
+    );
   }
-
-  await supabase
-    .from("gym_settings")
-    .update({ gmail_last_synced_at: new Date().toISOString() })
-    .eq("user_id", user.id);
-
-  return NextResponse.json({ synced });
 }

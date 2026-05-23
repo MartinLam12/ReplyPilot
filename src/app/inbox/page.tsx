@@ -86,6 +86,7 @@ export default function InboxPage() {
   const [detail, setDetail] = useState<EmailThread | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "thread">("list");
 
   const loadThreads = useCallback(async () => {
@@ -101,9 +102,24 @@ export default function InboxPage() {
 
   const handleSync = async () => {
     setSyncing(true);
-    await fetch("/api/gmail/sync", { method: "POST" });
-    await loadThreads();
-    setSyncing(false);
+    setSyncError(null);
+    try {
+      const res = await fetch("/api/gmail/sync", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = body?.error ?? `Sync failed (${res.status})`;
+        console.error("[gmail/sync] failed", res.status, body);
+        setSyncError(msg);
+      } else {
+        console.log("[gmail/sync] ok", body);
+      }
+      await loadThreads();
+    } catch (err) {
+      console.error("[gmail/sync] network error", err);
+      setSyncError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const handleSelectThread = async (thread: EmailThread) => {
@@ -151,6 +167,18 @@ export default function InboxPage() {
             Sync
           </Button>
         </div>
+        {syncError && (
+          <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-sm text-red-700 flex items-start justify-between gap-2">
+            <span className="flex-1">Sync error: {syncError}</span>
+            <button
+              onClick={() => setSyncError(null)}
+              className="text-red-500 hover:text-red-700 flex-shrink-0"
+              aria-label="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {loadingThreads ? (
           <div className="flex-1 flex items-center justify-center">
