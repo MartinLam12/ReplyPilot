@@ -26,7 +26,7 @@ export default function TermsOfServicePage() {
               1. Acceptance of Terms
             </h2>
             <p>
-              By accessing or using ClearPath, you agree to be bound by these
+              By accessing or using ReplyPilot, you agree to be bound by these
               Terms of Service. If you do not agree, please do not use the
               service.
             </p>
@@ -37,7 +37,7 @@ export default function TermsOfServicePage() {
               2. Description of Service
             </h2>
             <p>
-              ClearPath provides an AI readiness assessment tool for small
+              ReplyPilot provides an AI readiness assessment tool for small
               businesses. The service generates tailored reports with
               recommendations based on information you provide. Our
               recommendations are informational and should not be considered
@@ -84,8 +84,8 @@ export default function TermsOfServicePage() {
               5. Intellectual Property
             </h2>
             <p>
-              All content, branding, and software associated with ClearPath are
-              the property of ClearPath and are protected by applicable
+              All content, branding, and software associated with ReplyPilot are
+              the property of ReplyPilot and are protected by applicable
               intellectual property laws. Reports generated for your business are
               yours to use and share.
             </p>
@@ -96,7 +96,7 @@ export default function TermsOfServicePage() {
               6. Limitation of Liability
             </h2>
             <p>
-              ClearPath is provided &quot;as is&quot; without warranties of any
+              ReplyPilot is provided &quot;as is&quot; without warranties of any
               kind. We are not liable for any direct, indirect, incidental, or
               consequential damages arising from your use of the service. Our
               recommendations are for informational purposes and do not
@@ -110,7 +110,7 @@ export default function TermsOfServicePage() {
             </h2>
             <p>
               We reserve the right to suspend or terminate your access to
-              ClearPath at our discretion if you violate these terms. You may
+              ReplyPilot at our discretion if you violate these terms. You may
               delete your account at any time through the Settings page.
             </p>
           </section>
@@ -121,7 +121,7 @@ export default function TermsOfServicePage() {
             </h2>
             <p>
               We may modify these Terms of Service at any time. We will provide
-              notice of material changes. Your continued use of ClearPath after
+              notice of material changes. Your continued use of ReplyPilot after
               changes are posted constitutes acceptance.
             </p>
           </section>
@@ -133,10 +133,10 @@ export default function TermsOfServicePage() {
             <p>
               Questions about these terms? Contact us at{" "}
               <a
-                href="mailto:legal@clearpath.ai"
+                href="mailto:legal@replypilot.ai"
                 className="text-brand-600 hover:text-brand-700 underline underline-offset-2"
               >
-                legal@clearpath.ai
+                legal@replypilot.ai
               </a>
               .
             </p>

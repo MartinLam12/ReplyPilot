@@ -230,7 +230,7 @@ function ThreadView({
   onBack: () => void;
 }) {
   const [generating, setGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
   const [draftBody, setDraftBody] = useState(thread.latest_generation?.generated_body || "");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(thread.latest_generation?.status === "sent");
@@ -245,7 +245,7 @@ function ThreadView({
   const handleGenerate = async () => {
     setGenerating(true);
     setDraftBody("");
-    setGenerateError(false);
+    setGenerateError(null);
 
     const res = await fetch("/api/ai/generate", {
       method: "POST",
@@ -254,10 +254,15 @@ function ThreadView({
     });
 
     if (!res.headers.get("content-type")?.includes("text/event-stream")) {
-      const data = await res.json();
-      setGeneration(data.generation);
-      setDraftBody(data.body || "");
-      if (data.error || !data.body) setGenerateError(true);
+      const data = await res.json().catch(() => null);
+      setGeneration(data?.generation ?? null);
+      setDraftBody(data?.body || "");
+      if (!res.ok || data?.error || !data?.body) {
+        setGenerateError(
+          (typeof data?.error === "string" && data.error) ||
+            `Failed to generate a draft (HTTP ${res.status}). Try again.`
+        );
+      }
       setGenerating(false);
       return;
     }
@@ -288,7 +293,7 @@ function ThreadView({
               setGenerating(false);
               gotText = true;
             } else if (obj.type === "error") {
-              setGenerateError(true);
+              setGenerateError(obj.value || "Failed to generate a draft. Try again.");
             }
           } catch {
             // malformed chunk — skip
@@ -296,10 +301,10 @@ function ThreadView({
         }
       }
     } catch {
-      setGenerateError(true);
+      setGenerateError("Failed to generate a draft. Try again.");
     } finally {
       setGenerating(false);
-      if (!gotText) setGenerateError(true);
+      if (!gotText) setGenerateError((prev) => prev ?? "Failed to generate a draft. Try again.");
     }
   };
 
@@ -535,7 +540,7 @@ function ReplyPanel({
   onReject,
 }: {
   generating: boolean;
-  generateError: boolean;
+  generateError: string | null;
   generation: AIGeneration | null;
   draftBody: string;
   setDraftBody: (v: string) => void;
@@ -548,7 +553,7 @@ function ReplyPanel({
     return (
       <div className="flex flex-col gap-2">
         {generateError && (
-          <p className="text-xs text-danger-600">Failed to generate a draft. Try again.</p>
+          <p className="text-xs text-danger-600">{generateError}</p>
         )}
         <Button onClick={onGenerate} icon={<Sparkles className="w-4 h-4" />}>
           Suggest a Reply

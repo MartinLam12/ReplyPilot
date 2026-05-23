@@ -20,7 +20,6 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const MAX_EMBED_CHARS    = 1_000;
 const MIN_SAMPLE_WORDS   = 10;
 const MAX_SAMPLE_WORDS   = 500;
-const MIN_SIMILARITY     = 0.55; // don't inject irrelevant examples
 
 // ─── Email text cleaning ──────────────────────────────────────────────────────
 //
@@ -335,6 +334,13 @@ export async function retrieveStyleContext(
     // If no samples at all, return null (don't inject empty context)
     if (!profile || profile.sample_count === 0) return null;
 
+    // Always inject the top-k most similar samples the user has.
+    // match_style_samples already orders by cosine distance and limits to k,
+    // so the worst it returns is still the closest the user has written.
+    // The previous MIN_SIMILARITY=0.55 cutoff silently dropped every example
+    // when the user's voice differed sharply from the inbound email's topic
+    // (e.g. an old-English sample replied to a modern enquiry → empty examples
+    // → prompt fell back to the model's default voice).
     const examples: string[] = [];
 
     if (queryEmb) {
@@ -345,10 +351,22 @@ export async function retrieveStyleContext(
 
       if (matches?.length) {
         for (const m of matches) {
-          if ((m.similarity as number) >= MIN_SIMILARITY) {
-            examples.push(m.clean_body as string);
-          }
+          examples.push(m.clean_body as string);
         }
+      }
+    }
+
+    // Fallback: if embedding failed (queryEmb null) or RPC returned nothing,
+    // fetch the most recent samples directly so the prompt still gets style.
+    if (examples.length === 0) {
+      const { data: recent } = await supabase
+        .from("style_samples")
+        .select("clean_body")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(3);
+      if (recent?.length) {
+        for (const r of recent) examples.push(r.clean_body as string);
       }
     }
 

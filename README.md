@@ -1,8 +1,6 @@
-# ClearPath — AI Email Assistant for Boxing Gyms
+# ReplyPilot — AI Email Assistant for Boxing Gyms
 
-**ClearPath** helps boxing gym owners handle email faster. Read your inbox, get AI-drafted replies that follow your gym's rules, and let the system learn your writing style over time.
-
-🔗 **Live:** [clearpathai-martinlam12s-projects.vercel.app](https://clearpathai-martinlam12s-projects.vercel.app)
+**ReplyPilot** helps boxing gym owners handle email faster. Read your inbox, get AI-drafted replies that follow your gym's rules, and let the system learn your writing style over time.
 
 Built for a gym with 2 locations.
 
@@ -43,8 +41,8 @@ Built for a gym with 2 locations.
 
 ```bash
 # Clone the repository
-git clone https://github.com/MartinLam12/ClearPath.git
-cd ClearPath
+git clone https://github.com/MartinLam12/ReplyPilot.git
+cd ReplyPilot
 
 # Install dependencies
 npm install

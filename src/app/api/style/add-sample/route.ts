@@ -12,6 +12,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { addStyleSample, updateStyleProfile } from "@/lib/style-memory";
+import { enforceDailyLimit } from "@/lib/usage-limits";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -23,6 +24,11 @@ export async function POST(request: Request) {
 
   if (!emailBody || emailBody.length < 20) {
     return NextResponse.json({ error: "Email text too short" }, { status: 400 });
+  }
+
+  const limit = await enforceDailyLimit(supabase, "add_sample");
+  if (!limit.allowed) {
+    return NextResponse.json({ error: limit.message }, { status: 429 });
   }
 
   const result = await addStyleSample(supabase, user.id, emailBody);

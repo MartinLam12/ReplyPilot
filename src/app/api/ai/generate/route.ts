@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@/lib/supabase/server";
 import { retrieveStyleContext, buildStylePromptSection } from "@/lib/style-memory";
+import { enforceDailyLimit } from "@/lib/usage-limits";
 import type { EmailMessage } from "@/lib/types";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -31,6 +32,14 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const limit = await enforceDailyLimit(supabase, "generate");
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { generation: null, subject: "", body: "", error: limit.message },
+      { status: 429 }
+    );
+  }
 
   const { subject, messages } = await request.json() as {
     threadId: string;
@@ -67,8 +76,17 @@ export async function POST(request: Request) {
 
   const styleCtx = await retrieveStyleContext(supabase, user.id, inboundText);
   const styleSection = buildStylePromptSection(styleCtx);
+  const hasStyleExamples = !!styleCtx?.examples?.length;
 
   // ── Prompt ─────────────────────────────────────────────────────────────────
+  // When the user has provided style examples, the example voice wins and we
+  // drop the "friendly and warm, like a coach" default — otherwise that line
+  // overrides the user's actual writing style (e.g. old-English samples were
+  // getting rewritten into modern coach-speak).
+  const toneRule = hasStyleExamples
+    ? "- Match the voice, tone, vocabulary, and sentence rhythm of the [Example] replies above as closely as possible — including any unusual register such as formal or archaic English"
+    : "- Friendly and warm, like a coach";
+
   const prompt = `Write a reply for ${gymName}, a boxing/martial arts gym.
 ${gymContext ? `\nReply rules — follow these exactly:\n${gymContext}\n` : ""}${styleSection ? `\n${styleSection}` : ""}Subject: ${subject || "(no subject)"}
 Conversation:
@@ -76,7 +94,7 @@ ${conversationContext}
 
 Rules:
 - Under 100 words
-- Friendly and warm, like a coach
+${toneRule}
 - Include one clear next step or question
 - No markdown, no JSON
 

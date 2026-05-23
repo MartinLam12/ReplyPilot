@@ -27,13 +27,18 @@ Thanks for your interest in joining. We have a few spots available.
 Come in any time this week and we'll get you started.
 Looking forward to seeing you!`;
 
-function makeSupabase(profileData: unknown = null) {
+function makeSupabase(profileData: unknown = null, usageOverride?: { new_count: number; exceeded: boolean }) {
   const chain = {
     select:  jest.fn().mockReturnThis(),
     eq:      jest.fn().mockReturnThis(),
     single:  jest.fn().mockResolvedValue({ data: profileData }),
   };
-  return { from: jest.fn().mockReturnValue(chain) } as unknown as Awaited<ReturnType<typeof supabaseServer.createClient>>;
+  // Default: under the daily cap. Tests can pass usageOverride to simulate 429.
+  const rpc = jest.fn().mockResolvedValue({
+    data:  [usageOverride ?? { new_count: 1, exceeded: false }],
+    error: null,
+  });
+  return { from: jest.fn().mockReturnValue(chain), rpc } as unknown as Awaited<ReturnType<typeof supabaseServer.createClient>>;
 }
 
 function makeRequest(body: unknown) {
@@ -123,6 +128,24 @@ test("BUG: returns 500 (not 200) when addStyleSample fails", async () => {
   expect(res.status).toBe(500);
   expect(data.ok).toBeUndefined();   // must NOT return ok:true on failure
   expect(data.error).toBeTruthy();
+});
+
+// ─── Daily usage cap ──────────────────────────────────────────────────────────
+
+test("returns 429 when increment_usage reports exceeded", async () => {
+  const supabase = makeSupabase({ sample_count: 50 }, { new_count: 51, exceeded: true });
+  (supabase as unknown as Record<string, unknown>).auth = {
+    getUser: jest.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }),
+  };
+  mockCreateClient.mockResolvedValue(supabase);
+
+  const res  = await POST(makeRequest({ body: VALID_BODY }));
+  const data = await res.json();
+
+  expect(res.status).toBe(429);
+  expect(data.error).toMatch(/daily limit/i);
+  // Must NOT have tried to write a sample after rejection
+  expect(mockAddStyleSample).not.toHaveBeenCalled();
 });
 
 test("BUG: sampleCount must not return fake value 1 when profile is null", async () => {

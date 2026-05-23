@@ -42,9 +42,9 @@ function LandingNavbar() {
         <div className="flex items-center justify-between h-16">
           <Link href="/" className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg gradient-brand flex items-center justify-center">
-              <span className="text-white font-bold text-sm">C</span>
+              <span className="text-white font-bold text-sm">R</span>
             </div>
-            <span className="text-lg font-bold text-surface-900">ClearPath</span>
+            <span className="text-lg font-bold text-surface-900">ReplyPilot</span>
           </Link>
 
           <nav className="hidden md:flex items-center gap-8">
@@ -108,9 +108,9 @@ function AppNavbar() {
             </button>
             <Link href="/dashboard" className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg gradient-brand flex items-center justify-center">
-                <span className="text-white font-bold text-sm">C</span>
+                <span className="text-white font-bold text-sm">R</span>
               </div>
-              <span className="text-lg font-bold text-surface-900">ClearPath</span>
+              <span className="text-lg font-bold text-surface-900">ReplyPilot</span>
             </Link>
           </div>
 

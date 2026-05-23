@@ -9,9 +9,9 @@ export function Footer() {
           <div className="md:col-span-1">
             <Link href="/" className="flex items-center gap-2 mb-4">
               <div className="w-8 h-8 rounded-lg bg-brand-500 flex items-center justify-center">
-                <span className="text-white font-bold text-sm">C</span>
+                <span className="text-white font-bold text-sm">R</span>
               </div>
-              <span className="text-lg font-bold text-white">ClearPath</span>
+              <span className="text-lg font-bold text-white">ReplyPilot</span>
             </Link>
             <p className="text-sm text-surface-400 leading-relaxed">
               Helping small businesses find their AI advantage. Practical recommendations, not hype.
@@ -46,7 +46,7 @@ export function Footer() {
 
         <div className="border-t border-surface-800 mt-12 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-sm text-surface-500">
-            © 2026 ClearPath. All rights reserved.
+            © 2026 ReplyPilot. All rights reserved.
           </p>
           <p className="text-sm text-surface-500">
             Built for small businesses, by people who understand them.

@@ -26,7 +26,7 @@ export default function PrivacyPolicyPage() {
               1. Information We Collect
             </h2>
             <p>
-              When you use ClearPath, we collect the information you provide
+              When you use ReplyPilot, we collect the information you provide
               during account creation (name, email, business name) and the
               responses you submit through the AI readiness assessment. We also
               collect basic usage data such as pages visited and time spent on
@@ -43,7 +43,7 @@ export default function PrivacyPolicyPage() {
               <li>Generate your personalized AI readiness report</li>
               <li>Improve our assessment and recommendation engine</li>
               <li>Communicate with you about your account and our service</li>
-              <li>Analyze aggregate trends to improve ClearPath</li>
+              <li>Analyze aggregate trends to improve ReplyPilot</li>
             </ul>
           </section>
 
@@ -88,7 +88,7 @@ export default function PrivacyPolicyPage() {
             <p>
               We may update this Privacy Policy from time to time. We will
               notify you of significant changes by posting a notice on our
-              website. Continued use of ClearPath after changes constitutes
+              website. Continued use of ReplyPilot after changes constitutes
               acceptance of the updated policy.
             </p>
           </section>
@@ -101,10 +101,10 @@ export default function PrivacyPolicyPage() {
               If you have questions about this Privacy Policy, please contact us
               at{" "}
               <a
-                href="mailto:privacy@clearpath.ai"
+                href="mailto:privacy@replypilot.ai"
                 className="text-brand-600 hover:text-brand-700 underline underline-offset-2"
               >
-                privacy@clearpath.ai
+                privacy@replypilot.ai
               </a>
               .
             </p>

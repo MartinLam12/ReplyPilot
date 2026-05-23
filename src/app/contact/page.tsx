@@ -35,10 +35,10 @@ export default function ContactPage() {
                 For general inquiries and support.
               </p>
               <a
-                href="mailto:hello@clearpath.ai"
+                href="mailto:hello@replypilot.ai"
                 className="text-sm font-medium text-brand-600 hover:text-brand-700"
               >
-                hello@clearpath.ai
+                hello@replypilot.ai
               </a>
             </div>
           </Card>
@@ -50,13 +50,13 @@ export default function ContactPage() {
             <div>
               <h3 className="font-semibold text-surface-900 mb-1">Feedback</h3>
               <p className="text-sm text-surface-500 mb-2">
-                Help us improve ClearPath.
+                Help us improve ReplyPilot.
               </p>
               <a
-                href="mailto:feedback@clearpath.ai"
+                href="mailto:feedback@replypilot.ai"
                 className="text-sm font-medium text-brand-600 hover:text-brand-700"
               >
-                feedback@clearpath.ai
+                feedback@replypilot.ai
               </a>
             </div>
           </Card>

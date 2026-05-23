@@ -59,12 +59,12 @@ export default function SignupPage() {
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2 mb-6">
             <div className="w-8 h-8 rounded-lg gradient-brand flex items-center justify-center">
-              <span className="text-white font-bold text-sm">C</span>
+              <span className="text-white font-bold text-sm">R</span>
             </div>
-            <span className="text-lg font-bold text-surface-900">ClearPath</span>
+            <span className="text-lg font-bold text-surface-900">ReplyPilot</span>
           </Link>
           <h1 className="text-2xl font-bold text-surface-900">Create your account</h1>
-          <p className="text-surface-500 mt-1 text-sm">Set up ClearPath for your gym</p>
+          <p className="text-surface-500 mt-1 text-sm">Set up ReplyPilot for your gym</p>
         </div>
 
         <div className="bg-white rounded-2xl border border-surface-200 shadow-soft-sm p-6">

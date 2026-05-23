@@ -14,12 +14,12 @@ export default function AboutPage() {
         </Link>
 
         <h1 className="text-3xl font-bold text-surface-900 mb-6">
-          About ClearPath
+          About ReplyPilot
         </h1>
 
         <div className="prose prose-surface max-w-none space-y-6 text-surface-700 leading-relaxed">
           <p>
-            ClearPath was built with one mission: help small businesses navigate
+            ReplyPilot was built with one mission: help small businesses navigate
             the AI landscape without the jargon, hype, or overwhelming complexity.
           </p>
 

@@ -253,7 +253,7 @@ Coach Martin`}
               <AlertCircle className="w-5 h-5 text-surface-400 shrink-0 mt-0.5" />
               <div className="text-sm text-surface-600">
                 <p className="font-medium text-surface-800 mb-1">Gmail not connected</p>
-                <p>Connect your gym&apos;s Gmail account to pull in incoming emails and send replies directly from ClearPath.</p>
+                <p>Connect your gym&apos;s Gmail account to pull in incoming emails and send replies directly from ReplyPilot.</p>
               </div>
             </div>
             <a href="/api/gmail/auth">
