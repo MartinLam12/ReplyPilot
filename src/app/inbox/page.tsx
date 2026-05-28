@@ -80,25 +80,40 @@ function statusBadge(status: EmailThread["status"]) {
 
 // ─── Main page ───────────────────────────────────────────────────────────────
 
+const PAGE_SIZE = 50;
+
 export default function InboxPage() {
   const [threads, setThreads] = useState<EmailThread[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<EmailThread | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "thread">("list");
 
-  const loadThreads = useCallback(async () => {
-    setLoadingThreads(true);
-    const data = await listThreads();
+  const loadThreads = useCallback(async (limit: number) => {
+    const data = await listThreads(limit);
     setThreads(data);
-    setLoadingThreads(false);
+    return data.length;
   }, []);
 
   useEffect(() => {
-    loadThreads();
+    setLoadingThreads(true);
+    loadThreads(PAGE_SIZE).finally(() => setLoadingThreads(false));
   }, [loadThreads]);
+
+  const handleShowMore = async () => {
+    const next = pageSize + PAGE_SIZE;
+    setLoadingMore(true);
+    try {
+      const returned = await loadThreads(next);
+      setPageSize(returned < next ? returned : next);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -113,7 +128,7 @@ export default function InboxPage() {
       } else {
         console.log("[gmail/sync] ok", body);
       }
-      await loadThreads();
+      await loadThreads(pageSize);
     } catch (err) {
       console.error("[gmail/sync] network error", err);
       setSyncError(err instanceof Error ? err.message : "Network error");
@@ -145,7 +160,7 @@ export default function InboxPage() {
       const data = await getThreadDetail(selectedId);
       setDetail(data);
     }
-    await loadThreads();
+    await loadThreads(pageSize);
   };
 
   return (
@@ -211,6 +226,19 @@ export default function InboxPage() {
                 </div>
               </button>
             ))}
+            {threads.length >= pageSize && (
+              <div className="p-3 border-b border-surface-50">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  loading={loadingMore}
+                  onClick={handleShowMore}
+                  className="w-full"
+                >
+                  Show more
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>

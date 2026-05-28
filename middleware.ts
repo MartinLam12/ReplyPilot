@@ -5,9 +5,10 @@ const protectedRoutes = ["/dashboard", "/assessment", "/reports", "/settings"];
 const authRoutes = ["/login", "/signup"];
 
 function buildCSP(nonce: string): string {
+  const devEval = process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'";
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${devEval}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: blob: https: http: cid:",

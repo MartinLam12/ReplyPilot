@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { EmailThread } from "@/lib/types";
 
-export async function listThreads(): Promise<EmailThread[]> {
+export async function listThreads(limit: number = 50): Promise<EmailThread[]> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return [];
@@ -15,7 +15,7 @@ export async function listThreads(): Promise<EmailThread[]> {
     .eq("user_id", user.id)
     .neq("status", "archived")
     .order("last_message_at", { ascending: false })
-    .limit(50);
+    .limit(limit);
 
   return (data as EmailThread[]) || [];
 }

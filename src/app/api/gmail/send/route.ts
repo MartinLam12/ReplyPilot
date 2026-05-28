@@ -9,6 +9,12 @@ export async function POST(request: Request) {
 
   const { threadId, gmailThreadId, to, subject, body } = await request.json();
 
+  // Reject CR/LF in header-bound fields — they would otherwise inject extra
+  // headers (Bcc:, Reply-To:, …) into the raw MIME payload below.
+  if (typeof to !== "string" || typeof subject !== "string" || /[\r\n]/.test(to) || /[\r\n]/.test(subject)) {
+    return NextResponse.json({ error: "Invalid header value" }, { status: 400 });
+  }
+
   const { data: settings } = await supabase
     .from("gym_settings")
     .select("gmail_refresh_token, gmail_email")

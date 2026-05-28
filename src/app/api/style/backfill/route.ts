@@ -21,18 +21,31 @@ export async function POST() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Fetch outbound messages that have no style_sample yet.
-  // LEFT JOIN approach via NOT EXISTS to avoid loading the samples table.
-  const { data: messages, error } = await supabase
+  // Fetch already-processed message ids in a separate round-trip rather than
+  // embedding a raw SQL subquery in the filter (which would bypass PostgREST
+  // parameterization). RLS restricts style_samples to this user automatically.
+  //
+  // Trip-wire: if a single user accumulates more than a few hundred style_samples,
+  // the UUID list will outgrow PostgREST's URL filter budget — switch to a
+  // Postgres function (e.g. unprocessed_outbound_messages(p_limit int)) then.
+  const { data: processedRows } = await supabase
+    .from("style_samples")
+    .select("message_id")
+    .not("message_id", "is", null);
+
+  const processedIds = (processedRows ?? [])
+    .map((r) => r.message_id as string | null)
+    .filter((id): id is string => !!id);
+
+  const exclusionList = processedIds.length ? `(${processedIds.join(",")})` : null;
+
+  let messagesQuery = supabase
     .from("email_messages")
     .select("id, body_text, thread_id")
-    .eq("direction", "outbound")
-    // Exclude messages already processed (message_id unique in style_samples)
-    .not(
-      "id",
-      "in",
-      `(select message_id from style_samples where user_id = '${user.id}' and message_id is not null)`
-    )
+    .eq("direction", "outbound");
+  if (exclusionList) messagesQuery = messagesQuery.not("id", "in", exclusionList);
+
+  const { data: messages, error } = await messagesQuery
     .order("sent_at", { ascending: false })
     .limit(BATCH_SIZE);
 
@@ -42,15 +55,13 @@ export async function POST() {
   }
 
   // Count total remaining (for progress reporting)
-  const { count: totalRemaining } = await supabase
+  let countQuery = supabase
     .from("email_messages")
     .select("id", { count: "exact", head: true })
-    .eq("direction", "outbound")
-    .not(
-      "id",
-      "in",
-      `(select message_id from style_samples where user_id = '${user.id}' and message_id is not null)`
-    );
+    .eq("direction", "outbound");
+  if (exclusionList) countQuery = countQuery.not("id", "in", exclusionList);
+
+  const { count: totalRemaining } = await countQuery;
 
   let processed = 0;
   let skipped   = 0;
