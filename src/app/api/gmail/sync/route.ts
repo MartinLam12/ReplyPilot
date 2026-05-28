@@ -167,7 +167,7 @@ export async function POST() {
 
     const threadsResponse = await gmail.users.threads.list({
       userId: "me",
-      maxResults: 100,
+      maxResults: 200,
       labelIds: ["INBOX"],
       q: "newer_than:14d",
     });
