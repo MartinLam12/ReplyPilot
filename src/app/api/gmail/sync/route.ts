@@ -169,7 +169,7 @@ export async function POST() {
       userId: "me",
       maxResults: 200,
       labelIds: ["INBOX"],
-      q: "newer_than:14d",
+      q: "newer_than:14d category:primary",
     });
 
     const threads = threadsResponse.data.threads ?? [];
