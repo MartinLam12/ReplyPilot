@@ -287,6 +287,23 @@ export async function POST() {
       synced++;
     }
 
+    // Auto-archive threads that fall outside the current Primary set within the
+    // 14-day sync window. Anything older than 14 days is left alone — the sync
+    // query never looked at it, so we can't conclude it has left Primary.
+    const syncedThreadIds = threads.map((t) => t.id).filter((id): id is string => !!id);
+    let archived = 0;
+    if (syncedThreadIds.length) {
+      const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+      const idList = `("${syncedThreadIds.join('","')}")`;
+      const { count } = await supabase
+        .from("email_threads")
+        .update({ status: "archived" }, { count: "exact" })
+        .neq("status", "archived")
+        .gte("last_message_at", fourteenDaysAgo)
+        .not("gmail_thread_id", "in", idList);
+      archived = count ?? 0;
+    }
+
     await supabase
       .from("gym_settings")
       .update({ gmail_last_synced_at: new Date().toISOString() })
@@ -294,6 +311,7 @@ export async function POST() {
 
     return NextResponse.json({
       synced,
+      archived,
       gmailThreadCount: threads.length,
       resultSizeEstimate: threadsResponse.data.resultSizeEstimate ?? null,
       dropped,
