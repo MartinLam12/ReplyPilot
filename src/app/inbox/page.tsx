@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Button, Badge } from "@/components/ui";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Button } from "@/components/ui";
 import { listThreads, getThreadDetail, archiveThread } from "@/app/actions/threads";
 import { cn } from "@/lib/utils";
 import type { EmailThread } from "@/lib/types";
@@ -11,20 +11,23 @@ import { ThreadView } from "./components/ThreadView";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function timeAgo(dateStr: string | null): string {
+// Gmail-style received timestamp: clock time for today, "Mon D" for the current
+// year, and "M/D/YY" for older messages.
+function formatReceived(dateStr: string | null): string {
   if (!dateStr) return "";
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-function statusBadge(status: EmailThread["status"]) {
-  if (status === "replied") return <Badge variant="success">Replied</Badge>;
-  if (status === "unread") return <Badge variant="brand">New</Badge>;
-  return null;
+  const date = new Date(dateStr);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  return date.toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "2-digit" });
 }
 
 // ─── Main page ───────────────────────────────────────────────────────────────
@@ -37,32 +40,51 @@ export default function InboxPage() {
   const [detail, setDetail] = useState<EmailThread | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [pageSize, setPageSize] = useState(PAGE_SIZE);
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const [hasMore, setHasMore] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "thread">("list");
 
-  const loadThreads = useCallback(async (limit: number) => {
-    const data = await listThreads(limit);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  const loadThreads = useCallback(async (lim: number) => {
+    const data = await listThreads(lim);
     setThreads(data);
+    setHasMore(data.length === lim);
     return data.length;
   }, []);
 
+  // Load the current window whenever the limit grows (initial load + infinite
+  // scroll). The first page shows the full-pane spinner; later pages show the
+  // inline "loading more" row so the feed stays continuous.
   useEffect(() => {
-    setLoadingThreads(true);
-    loadThreads(PAGE_SIZE).finally(() => setLoadingThreads(false));
-  }, [loadThreads]);
-
-  const handleShowMore = async () => {
-    const next = pageSize + PAGE_SIZE;
-    setLoadingMore(true);
-    try {
-      const returned = await loadThreads(next);
-      setPageSize(returned < next ? returned : next);
-    } finally {
+    const initial = limit === PAGE_SIZE;
+    if (initial) setLoadingThreads(true);
+    else setLoadingMore(true);
+    loadThreads(limit).finally(() => {
+      setLoadingThreads(false);
       setLoadingMore(false);
-    }
-  };
+    });
+  }, [limit, loadThreads]);
+
+  // Infinite scroll: when the bottom sentinel scrolls into view and more rows
+  // may exist, grow the window. No buttons, no page breaks.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore && !loadingThreads) {
+          setLimit((l) => l + PAGE_SIZE);
+        }
+      },
+      { root: scrollRef.current, rootMargin: "300px" }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, loadingThreads, threads.length]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -77,7 +99,7 @@ export default function InboxPage() {
       } else {
         console.log("[gmail/sync] ok", body);
       }
-      await loadThreads(pageSize);
+      await loadThreads(limit);
     } catch (err) {
       console.error("[gmail/sync] network error", err);
       setSyncError(err instanceof Error ? err.message : "Network error");
@@ -109,7 +131,7 @@ export default function InboxPage() {
       const data = await getThreadDetail(selectedId);
       setDetail(data);
     }
-    await loadThreads(pageSize);
+    await loadThreads(limit);
   };
 
   return (
@@ -151,41 +173,52 @@ export default function InboxPage() {
         ) : threads.length === 0 ? (
           <EmptyInbox onSync={handleSync} syncing={syncing} />
         ) : (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            {threads.map((thread) => (
-              <button
-                key={thread.id}
-                onClick={() => handleSelectThread(thread)}
-                className={cn(
-                  "w-full text-left px-4 py-4 border-b border-surface-50 hover:bg-surface-50 transition-colors",
-                  selectedId === thread.id && "bg-brand-50 border-l-2 border-l-brand-500"
-                )}
-              >
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  <span className="font-medium text-surface-900 text-sm truncate">
-                    {senderName(thread)}
-                  </span>
-                  <span className="text-xs text-surface-400 shrink-0">
-                    {timeAgo(thread.last_message_at)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm text-surface-600 truncate">{thread.subject}</p>
-                  {statusBadge(thread.status)}
-                </div>
-              </button>
-            ))}
-            {threads.length >= pageSize && (
-              <div className="p-3 border-b border-surface-50">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  loading={loadingMore}
-                  onClick={handleShowMore}
-                  className="w-full"
+          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+            {threads.map((thread) => {
+              const unread = thread.status === "unread";
+              return (
+                <button
+                  key={thread.id}
+                  onClick={() => handleSelectThread(thread)}
+                  className={cn(
+                    "w-full text-left px-4 py-3 border-b border-surface-50 hover:bg-surface-50 transition-colors",
+                    selectedId === thread.id && "bg-brand-50 border-l-2 border-l-brand-500"
+                  )}
                 >
-                  Show more
-                </Button>
+                  <div className="flex items-baseline justify-between gap-2 mb-0.5">
+                    <span
+                      className={cn(
+                        "text-sm truncate",
+                        unread ? "font-semibold text-surface-900" : "font-normal text-surface-700"
+                      )}
+                    >
+                      {senderName(thread)}
+                    </span>
+                    <span
+                      className={cn(
+                        "text-xs shrink-0",
+                        unread ? "text-surface-600 font-medium" : "text-surface-400"
+                      )}
+                    >
+                      {formatReceived(thread.last_message_at)}
+                    </span>
+                  </div>
+                  <p
+                    className={cn(
+                      "text-sm truncate",
+                      unread ? "font-medium text-surface-800" : "text-surface-600"
+                    )}
+                  >
+                    {thread.subject || "(no subject)"}
+                  </p>
+                </button>
+              );
+            })}
+            {/* Infinite-scroll trigger + loading row; keeps the feed continuous */}
+            <div ref={sentinelRef} aria-hidden className="h-px" />
+            {loadingMore && (
+              <div className="flex justify-center py-4">
+                <div className="w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
               </div>
             )}
           </div>

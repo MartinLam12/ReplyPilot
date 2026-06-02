@@ -66,9 +66,9 @@ ${inject}
 </head><body>${upgraded}</body></html>`;
 }
 
-export function EmailHtmlFrame({ html }: { html: string }) {
+export function EmailHtmlFrame({ html, minHeight = 530 }: { html: string; minHeight?: number }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const MIN_EMAIL_FRAME_HEIGHT = 530;
+  const MIN_EMAIL_FRAME_HEIGHT = minHeight;
   const [height, setHeight] = useState(MIN_EMAIL_FRAME_HEIGHT);
 
   useEffect(() => {

@@ -3,8 +3,16 @@
 import { useState, useEffect } from "react";
 import { Card, CardTitle, CardDescription, Button, Input, Textarea } from "@/components/ui";
 import { getGymSettings, saveGymSettings, disconnectGmail } from "@/app/actions/gym-settings";
-import { Save, Building2, Mail, CheckCircle2, AlertCircle, Sparkles, Plus } from "lucide-react";
+import { Save, Building2, Mail, CheckCircle2, AlertCircle, Sparkles, Plus, Trash2 } from "lucide-react";
 import type { GymSettings } from "@/lib/types";
+
+interface StyleSample {
+  id: string;
+  clean_body: string;
+  word_count: number;
+  context_cluster: string | null;
+  created_at: string;
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<GymSettings | null>(null);
@@ -16,10 +24,19 @@ export default function SettingsPage() {
 
   // Style examples
   const [sampleCount, setSampleCount] = useState<number | null>(null);
+  const [examples, setExamples] = useState<StyleSample[]>([]);
   const [exampleText, setExampleText] = useState("");
   const [addingExample, setAddingExample] = useState(false);
   const [exampleAdded, setExampleAdded] = useState(false);
   const [exampleError, setExampleError] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  const loadExamples = () => {
+    fetch("/api/style/samples")
+      .then((r) => r.json())
+      .then((d) => setExamples(d.samples ?? []))
+      .catch(() => setExamples([]));
+  };
 
   useEffect(() => {
     getGymSettings().then((s) => {
@@ -34,6 +51,8 @@ export default function SettingsPage() {
       .then((r) => r.json())
       .then((d) => setSampleCount(d.sampleCount ?? 0))
       .catch(() => setSampleCount(0));
+
+    loadExamples();
 
     // Handle OAuth result query params
     const params = new URLSearchParams(window.location.search);
@@ -72,7 +91,27 @@ export default function SettingsPage() {
     setExampleText("");
     setSampleCount(data.sampleCount);
     setExampleAdded(true);
+    loadExamples();
     setTimeout(() => setExampleAdded(false), 3000);
+  };
+
+  const handleRemoveExample = async (id: string) => {
+    setRemovingId(id);
+    setExampleError(null);
+    try {
+      const res = await fetch(`/api/style/samples?id=${id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        setExampleError(data?.error || `Remove failed (HTTP ${res.status})`);
+        return;
+      }
+      setExamples((prev) => prev.filter((e) => e.id !== id));
+      setSampleCount(data.sampleCount);
+    } catch (err) {
+      setExampleError(`Network error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRemovingId(null);
+    }
   };
 
   const handleSave = async () => {
@@ -209,6 +248,42 @@ Coach Martin`}
           >
             Save Example
           </Button>
+
+          {examples.length > 0 && (
+            <div className="space-y-2 pt-4 border-t border-surface-100">
+              <p className="text-xs font-medium text-surface-500">
+                Your examples — the AI draws on these when drafting replies
+              </p>
+              {examples.map((ex) => (
+                <div
+                  key={ex.id}
+                  className="flex items-start gap-3 p-3 rounded-xl border border-surface-200 bg-surface-50"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-surface-700 whitespace-pre-wrap line-clamp-3">
+                      {ex.clean_body}
+                    </p>
+                    <p className="text-xs text-surface-400 mt-1">
+                      {ex.word_count} words
+                      {ex.context_cluster ? ` · ${ex.context_cluster.replace("_", " ")}` : ""}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleRemoveExample(ex.id)}
+                    disabled={removingId === ex.id}
+                    aria-label="Remove example"
+                    className="shrink-0 text-surface-400 hover:text-red-600 disabled:opacity-40 transition-colors p-1"
+                  >
+                    {removingId === ex.id ? (
+                      <div className="w-4 h-4 border-2 border-surface-300 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </Card>
 

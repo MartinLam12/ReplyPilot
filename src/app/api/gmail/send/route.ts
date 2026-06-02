@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     body,
   ].join("\r\n");
 
-  await gmail.users.messages.send({
+  const sendRes = await gmail.users.messages.send({
     userId: "me",
     requestBody: {
       raw: Buffer.from(raw).toString("base64url"),
@@ -51,10 +51,34 @@ export async function POST(request: Request) {
     },
   });
 
-  // Mark thread as replied
+  const sentAt = new Date().toISOString();
+
+  // Persist the sent reply immediately so it shows in the conversation view
+  // without waiting for the next Gmail sync. The real Gmail message id is used
+  // as the conflict key, so the next sync's upsert dedupes against this row
+  // (and may refine body_text from the canonical MIME).
+  const sentMessageId = sendRes.data.id;
+  if (sentMessageId) {
+    await supabase.from("email_messages").upsert(
+      {
+        thread_id: threadId,
+        gmail_message_id: sentMessageId,
+        direction: "outbound",
+        from_email: settings.gmail_email,
+        to_email: to,
+        subject,
+        body_text: body,
+        sent_at: sentAt,
+      },
+      { onConflict: "gmail_message_id" }
+    );
+  }
+
+  // Mark replied and move the thread to the top — the reply is now the latest
+  // message, mirroring Gmail's "active conversation rises" behaviour.
   await supabase
     .from("email_threads")
-    .update({ status: "replied" })
+    .update({ status: "replied", last_message_at: sentAt })
     .eq("id", threadId);
 
   return NextResponse.json({ success: true });

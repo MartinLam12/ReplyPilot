@@ -126,6 +126,29 @@ function parseEmailAddress(raw: string): { email: string; name: string | null } 
   return { email, name };
 }
 
+// Run an async mapper over items with a bounded number of workers, so we fetch
+// several Gmail threads at once instead of strictly one-at-a-time.
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (true) {
+        const idx = next++;
+        if (idx >= items.length) break;
+        results[idx] = await fn(items[idx]);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 // ─── Route ───────────────────────────────────────────────────────────────────
 
 export async function POST() {
@@ -173,25 +196,56 @@ export async function POST() {
     });
 
     const threads = threadsResponse.data.threads ?? [];
-    let synced = 0;
+    const ownEmail = settings.gmail_email?.toLowerCase() ?? "";
     const dropped: { gmailThreadId: string; reason: string }[] = [];
 
-    for (const thread of threads) {
-      if (!thread.id) {
+    // ── Incremental partition ──────────────────────────────────────────────
+    // Pull the historyId we last stored for each known thread in one query.
+    // Threads whose historyId is unchanged since then are skipped (no costly
+    // threads.get); only new or modified threads are fetched in full.
+    const { data: existingRows } = await supabase
+      .from("email_threads")
+      .select("gmail_thread_id, gmail_history_id")
+      .eq("user_id", user.id);
+    const knownHistory = new Map<string, string | null>(
+      (existingRows ?? []).map((r) => [r.gmail_thread_id, r.gmail_history_id])
+    );
+
+    const toFetch: typeof threads = [];
+    let skipped = 0;
+
+    for (const t of threads) {
+      if (!t.id) {
         dropped.push({ gmailThreadId: "(no id)", reason: "thread has no id" });
         continue;
       }
+      const prevHist = knownHistory.get(t.id);
+      const unchanged =
+        knownHistory.has(t.id) && !!prevHist && !!t.historyId && prevHist === t.historyId;
+      if (unchanged) {
+        // Already stored and nothing changed since last sync — nothing to do.
+        skipped++;
+      } else {
+        toFetch.push(t);
+      }
+    }
 
+    // ── Full fetch for new/changed threads, in parallel ────────────────────
+    // Each task catches its own errors so one bad/transient thread can never
+    // reject a sibling-laden Promise.all and crash the whole route.
+    const fetchResults = await mapPool(toFetch, 4, async (t): Promise<boolean> => {
+     try {
+      const threadId = t.id!;
       const threadDetail = await gmail.users.threads.get({
         userId: "me",
-        id: thread.id,
+        id: threadId,
         format: "full",
       });
 
       const messages = threadDetail.data.messages ?? [];
       if (!messages.length) {
-        dropped.push({ gmailThreadId: thread.id, reason: "no messages in thread" });
-        continue;
+        dropped.push({ gmailThreadId: threadId, reason: "no messages in thread" });
+        return false;
       }
 
       const firstMessage = messages[0];
@@ -201,8 +255,8 @@ export async function POST() {
       const lastDate = new Date(
         parseInt(lastMessage.internalDate ?? "0")
       ).toISOString();
+      const historyId = t.historyId ?? threadDetail.data.historyId ?? null;
 
-      const ownEmail = settings.gmail_email?.toLowerCase() ?? "";
       const inboundMsg = messages.find((m) => {
         const from = headerVal(m.payload?.headers, "from").toLowerCase();
         return !from.includes(ownEmail);
@@ -231,10 +285,11 @@ export async function POST() {
         .upsert(
           {
             user_id: user.id,
-            gmail_thread_id: thread.id,
+            gmail_thread_id: threadId,
             contact_id: contactId,
             subject,
             last_message_at: lastDate,
+            gmail_history_id: historyId,
           },
           { onConflict: "user_id,gmail_thread_id" }
         )
@@ -243,49 +298,59 @@ export async function POST() {
 
       if (!upsertedThread) {
         dropped.push({
-          gmailThreadId: thread.id,
+          gmailThreadId: threadId,
           reason: `thread upsert failed: ${threadErr?.message ?? "unknown"}`,
         });
-        continue;
+        return false;
       }
 
-      for (const msg of messages) {
-        if (!msg.id) continue;
+      // Build all message rows, then write them in a single batched upsert.
+      const messageRows = messages
+        .filter((msg) => !!msg.id)
+        .map((msg) => {
+          const fromRaw = headerVal(msg.payload?.headers, "from");
+          const toRaw = headerVal(msg.payload?.headers, "to");
+          const msgSubject = headerVal(msg.payload?.headers, "subject");
+          const sentAt = new Date(parseInt(msg.internalDate ?? "0")).toISOString();
+          const isOutbound = fromRaw.toLowerCase().includes(ownEmail);
 
-        const fromRaw = headerVal(msg.payload?.headers, "from");
-        const toRaw = headerVal(msg.payload?.headers, "to");
-        const msgSubject = headerVal(msg.payload?.headers, "subject");
-        const sentAt = new Date(parseInt(msg.internalDate ?? "0")).toISOString();
-        const isOutbound = fromRaw.toLowerCase().includes(ownEmail);
+          const acc: WalkResult = { html: null, plain: null, cids: new Map() };
+          walk(msg.payload ?? undefined, acc);
 
-        const acc: WalkResult = { html: null, plain: null, cids: new Map() };
-        walk(msg.payload ?? undefined, acc);
+          let bodyText: string;
+          if (acc.html) {
+            bodyText = sanitize(applyCids(acc.html, acc.cids)).slice(0, 200_000);
+          } else {
+            bodyText = (acc.plain ?? "").slice(0, 10_000);
+          }
 
-        let bodyText: string;
-        if (acc.html) {
-          const html = sanitize(applyCids(acc.html, acc.cids));
-          bodyText = html.slice(0, 200_000);
-        } else {
-          bodyText = (acc.plain ?? "").slice(0, 10_000);
-        }
-
-        await supabase.from("email_messages").upsert(
-          {
+          return {
             thread_id: upsertedThread.id,
-            gmail_message_id: msg.id,
+            gmail_message_id: msg.id!,
             direction: isOutbound ? "outbound" : "inbound",
             from_email: fromRaw,
             to_email: toRaw,
             subject: msgSubject,
             body_text: bodyText,
             sent_at: sentAt,
-          },
-          { onConflict: "gmail_message_id" }
-        );
+          };
+        });
+
+      if (messageRows.length) {
+        await supabase
+          .from("email_messages")
+          .upsert(messageRows, { onConflict: "gmail_message_id" });
       }
 
-      synced++;
-    }
+      return true;
+     } catch (threadErr) {
+      const reason = threadErr instanceof Error ? threadErr.message : String(threadErr);
+      dropped.push({ gmailThreadId: t.id ?? "(no id)", reason });
+      return false;
+     }
+    });
+
+    const synced = fetchResults.filter(Boolean).length;
 
     // Auto-archive threads that fall outside the current Primary set within the
     // 14-day sync window. Anything older than 14 days is left alone — the sync
@@ -311,6 +376,7 @@ export async function POST() {
 
     return NextResponse.json({
       synced,
+      skipped,
       archived,
       gmailThreadCount: threads.length,
       resultSizeEstimate: threadsResponse.data.resultSizeEstimate ?? null,

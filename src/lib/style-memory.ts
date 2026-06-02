@@ -259,7 +259,24 @@ export async function updateStyleProfile(
       .order("created_at", { ascending: false })
       .limit(100);
 
-    if (!samples?.length) return;
+    // No samples left (e.g. the user removed them all) — reset the profile to
+    // zero so retrieveStyleContext stops injecting a stale voice into drafts.
+    if (!samples?.length) {
+      await supabase.from("style_profile").upsert(
+        {
+          user_id:          userId,
+          sample_count:     0,
+          avg_word_count:   0,
+          tone_score:       0.5,
+          uses_bullets:     false,
+          common_greetings: [],
+          common_signoffs:  [],
+          updated_at:       new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
+      return;
+    }
 
     const tones       = samples.map((s) => computeToneScore(s.clean_body));
     const avgTone     = tones.reduce((a, b) => a + b, 0) / tones.length;

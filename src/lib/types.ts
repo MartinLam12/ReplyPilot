@@ -35,6 +35,7 @@ export interface EmailThread {
   subject: string | null;
   status: "unread" | "pending_reply" | "replied" | "archived";
   last_message_at: string | null;
+  gmail_history_id: string | null;
   created_at: string;
   contact?: Contact | null;
   messages?: EmailMessage[];

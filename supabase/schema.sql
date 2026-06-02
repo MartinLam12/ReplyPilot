@@ -49,9 +49,14 @@ create table if not exists email_threads (
   subject           text,
   status            text check (status in ('unread','pending_reply','replied','archived')) default 'unread',
   last_message_at   timestamptz,
+  gmail_history_id  text,
   created_at        timestamptz default now(),
   unique (user_id, gmail_thread_id)
 );
+
+-- Per-thread Gmail historyId. Lets sync skip threads that have not changed
+-- since the last run instead of re-fetching the whole mailbox every time.
+alter table email_threads add column if not exists gmail_history_id text;
 
 alter table email_threads enable row level security;
 create policy "users own their email_threads"
