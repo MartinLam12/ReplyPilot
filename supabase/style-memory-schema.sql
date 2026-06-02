@@ -87,13 +87,29 @@ create policy "users own their style_feedback"
   with check (auth.uid() = user_id);
 
 -- ─── RPC: vector similarity search ───────────────────────────────────────────
+-- ⚠️ APPLY MANUALLY: paste this whole block into the Supabase SQL editor and run it.
+--    Schema in this repo is NOT auto-migrated — editing this file alone changes nothing.
 -- Called from /api/ai/generate to retrieve the user's most similar past replies.
 --
 -- security invoker means it runs with the calling user's permissions,
 -- so RLS on style_samples automatically restricts results to auth.uid().
--- The IVFFlat index is used for approximate search (< 5ms at 10k samples/user).
+--
+-- Ranking now factors in the feedback `weight` (good → ↑weight, wrong_style → ↓weight):
+--     effective_rank = cosine_distance * (1.0 / weight)
+-- A higher-weight sample is treated as "closer" and surfaces first; a demoted
+-- (low-weight) sample sinks. This is what makes the "Sound like you? Yes/No"
+-- feedback actually affect future drafts.
+--
+-- Trade-off: blending weight into ORDER BY means the IVFFlat index can no longer
+-- serve the sort directly (it indexes raw distance), so this performs a per-user
+-- scan + sort. Fine at current per-user sample volumes (RLS scopes to one user);
+-- revisit only if a single user ever stores tens of thousands of samples.
 
-create or replace function match_style_samples(
+-- Return type changes (adds `weight`), so the existing function must be dropped
+-- first — CREATE OR REPLACE cannot alter a function's return table.
+drop function if exists match_style_samples(vector, int);
+
+create function match_style_samples(
   query_emb   vector(768),
   match_count int default 3
 )
@@ -102,7 +118,8 @@ returns table (
   clean_body      text,
   word_count      int,
   context_cluster text,
-  similarity      float
+  similarity      float,
+  weight          numeric
 )
 language sql stable
 security invoker
@@ -112,11 +129,12 @@ as $$
     ss.clean_body,
     ss.word_count,
     ss.context_cluster,
-    1 - (ss.embedding <=> query_emb) as similarity
+    1 - (ss.embedding <=> query_emb) as similarity,
+    ss.weight
   from  style_samples ss
   where ss.embedding  is not null
     and ss.word_count >= 10
-  order by ss.embedding <=> query_emb
+  order by (ss.embedding <=> query_emb) * (1.0 / nullif(ss.weight, 0))
   limit match_count;
 $$;
 
