@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const protectedRoutes = ["/dashboard", "/assessment", "/reports", "/settings"];
+const protectedRoutes = ["/dashboard", "/inbox", "/contacts", "/settings"];
 const authRoutes = ["/login", "/signup"];
 
 function buildCSP(nonce: string): string {
