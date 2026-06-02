@@ -4,6 +4,7 @@
 > **Scope:** Documents the system *as it currently exists*. No improvements are suggested.
 > **Method:** Every non-obvious claim cites the file(s) it came from. Confidence is labelled **[High]**, **[Medium]**, or **[Low]**. Where something cannot be determined from the code, it says so explicitly.
 > **Generated from:** a full read of `src/`, `supabase/`, root config, and the build manifest.
+> **Last revised:** 2026-06-02, after the "fix reply thread and text settings" change set — reflects the inbox component split, incremental Gmail sync, feedback-weighted style retrieval, style-example management, removal of the duplicate middleware, and pruning of unused deps/components.
 
 ---
 
@@ -70,7 +71,7 @@ Source for all versions: [package.json](package.json).
 | **lucide-react** | Icon set | Navbar, pages, buttons | SVG icons |
 | **clsx** (via `cn()`) | Conditional class merging | [src/lib/utils.ts](src/lib/utils.ts#L3) | Compose Tailwind class strings |
 
-> **`framer-motion`** and **`recharts`** are listed as dependencies but have **zero imports** anywhere in `src/` (verified by grep). **[High]** They are unused — likely leftovers from an earlier product shape (see §18).
+> The runtime dependency list is now lean (9 packages — see [package.json](package.json)): `@google/generative-ai`, `@supabase/ssr`, `@supabase/supabase-js`, `clsx`, `googleapis`, `lucide-react`, `next`, `react`, `react-dom`. Earlier leftovers `framer-motion` and `recharts` were **removed** (commit `99a72c7`); no unused runtime deps remain. **[High]**
 
 ### Backend (within Next.js)
 | Tech | Why | Where | Responsibility |
@@ -101,8 +102,8 @@ Source for all versions: [package.json](package.json).
 > There is **no Redux/Zustand/React Query/SWR**. **[High]**
 
 ### UI libraries
-- In-house design system in [src/components/ui/](src/components/ui/): `Button`, `Card`(+`CardHeader`/`CardTitle`/`CardDescription`), `Input`/`Textarea`/`Select`, `Badge`. Actively used.
-- `ProgressBar`, `ScoreRing`, `Stepper`, `ToggleChip` exist but are **unused** (zero external imports — verified). **[High]**
+- In-house design system in [src/components/ui/](src/components/ui/): `Button`, `Card`(+`CardTitle`/`CardDescription`), `Input`/`Textarea`/`Select`, `Badge` — all actively used. Barrel: [index.ts](src/components/ui/index.ts).
+- The previously-unused primitives `ProgressBar`, `ScoreRing`, `Stepper`, `ToggleChip` were **removed** (commit `1439110`). The `ui/` folder now contains only what's imported. **[High]**
 
 ### Third-party services
 - **Google Gemini** — `gemini-2.5-flash-lite` (generation) and `gemini-embedding-001` (embeddings). [src/app/api/ai/generate/route.ts:103](src/app/api/ai/generate/route.ts#L103), [src/lib/style-memory.ts:171](src/lib/style-memory.ts#L171).
@@ -130,24 +131,25 @@ ReplyPilot/
 │   │   ├── actions/          ← Server Actions (first-party CRUD)
 │   │   ├── api/              ← Route Handlers (external + HTTP)
 │   │   ├── auth/callback/    ← Supabase code-exchange handler
-│   │   ├── (pages)/          ← dashboard, inbox, contacts, settings, login, signup, marketing/legal
+│   │   ├── inbox/            ← page.tsx (orchestrator) + components/ + utils.ts
+│   │   │   └── components/   ← ThreadView, MessageBubble, EmailHtmlFrame, ReplyPanel, StyleFeedback
+│   │   ├── (pages)/          ← dashboard, contacts, settings, login, signup, marketing/legal
 │   │   ├── layout.tsx        ← Root layout (server)
 │   │   ├── client-layout.tsx ← Client shell (providers + chrome)
 │   │   └── globals.css
 │   ├── components/
-│   │   ├── ui/               ← Design-system primitives
+│   │   ├── ui/               ← Design-system primitives (Button, Card, Input, Badge)
 │   │   └── layout/           ← Navbar, Footer
-│   ├── lib/                  ← Domain logic + infra helpers
-│   │   ├── supabase/         ← Supabase client factories
-│   │   ├── style-memory.ts   ← Style-learning engine (the core IP)
-│   │   ├── usage-limits.ts   ← Daily caps
-│   │   ├── user-context.tsx  ← Auth context
-│   │   ├── types.ts          ← Shared types
-│   │   └── utils.ts          ← cn(), formatDate()
-│   └── middleware.ts         ← DEAD duplicate (see §4/§18)
+│   └── lib/                  ← Domain logic + infra helpers
+│       ├── supabase/         ← Supabase client factories
+│       ├── style-memory.ts   ← Style-learning engine (the core IP)
+│       ├── usage-limits.ts   ← Daily caps
+│       ├── user-context.tsx  ← Auth context
+│       ├── types.ts          ← Shared types
+│       └── utils.ts          ← cn(), formatDate()
 ├── supabase/                 ← SQL schema, RLS, RPCs
 ├── public/                   ← Static assets
-├── middleware.ts             ← ACTIVE middleware (root)
+├── middleware.ts             ← Middleware (root; the only one — see §4)
 ├── next.config.ts            ← Security headers
 ├── tailwind.config.ts, postcss.config.mjs, globals.css
 ├── jest.config.ts, eslint.config.mjs, tsconfig.json
@@ -157,7 +159,7 @@ ReplyPilot/
 ### `src/app/` — routes, pages, server endpoints
 - **Purpose:** Every URL and every server endpoint. Next.js App Router maps folders → routes.
 - **Responsibilities:** UI rendering (pages), server CRUD (`actions/`), HTTP/integration endpoints (`api/`).
-- **Important files:** [layout.tsx](src/app/layout.tsx), [client-layout.tsx](src/app/client-layout.tsx), [page.tsx](src/app/page.tsx) (landing), [inbox/page.tsx](src/app/inbox/page.tsx) (largest, 722 lines).
+- **Important files:** [layout.tsx](src/app/layout.tsx), [client-layout.tsx](src/app/client-layout.tsx), [page.tsx](src/app/page.tsx) (landing), [inbox/page.tsx](src/app/inbox/page.tsx) (the core flow, now ~274 lines after the sub-components were extracted into [inbox/components/](src/app/inbox/components/)).
 - **Dependencies:** `components/`, `lib/`, Supabase, Gemini, Gmail.
 - **Interactions:** Pages call `actions/` and `fetch()` `api/`. Both call into `lib/` and Supabase.
 
@@ -168,15 +170,18 @@ ReplyPilot/
 - **Interactions:** Called by `dashboard`, `inbox`, `contacts`, `settings` pages.
 
 ### `src/app/api/` — Route Handlers
-- **Purpose:** Endpoints needing HTTP semantics, streaming, or external SDKs.
-- **Subfolders:** `gmail/` (auth, callback, sync, send), `ai/generate`, `style/` (add-sample, backfill, feedback, status), and `style/__tests__/`.
+- **Purpose:** Endpoints needing HTTP semantics or external SDKs.
+- **Subfolders:** `gmail/` (auth, callback, sync, send), `ai/generate`, `style/` (add-sample, backfill, feedback, status, **samples** — list/delete examples), and `style/__tests__/`.
 - **Interactions:** Called via `fetch()` from pages; call Gemini/Gmail/Supabase and `lib/`.
 
 ### `src/app/auth/callback/`
 - **Purpose:** Supabase OAuth/email-confirm code exchange ([route.ts](src/app/auth/callback/route.ts)). Distinct from Gmail callback.
 
+### `src/app/inbox/` — the core feature, now componentized
+- **Purpose:** The inbox is the only page large enough to warrant its own folder. [page.tsx](src/app/inbox/page.tsx) is the orchestrator (list, selection, sync, pagination, mobile toggle); the rendering/reply UI lives in [components/](src/app/inbox/components/): [ThreadView.tsx](src/app/inbox/components/ThreadView.tsx), [MessageBubble.tsx](src/app/inbox/components/MessageBubble.tsx), [EmailHtmlFrame.tsx](src/app/inbox/components/EmailHtmlFrame.tsx), [ReplyPanel.tsx](src/app/inbox/components/ReplyPanel.tsx), [StyleFeedback.tsx](src/app/inbox/components/StyleFeedback.tsx). Shared helpers (e.g. `senderName`) are in [utils.ts](src/app/inbox/utils.ts).
+
 ### `src/components/ui/` — design system
-- **Purpose:** Reusable presentational primitives. **Files:** Button, Card, Input/Textarea/Select, Badge (used); ProgressBar, ScoreRing, Stepper, ToggleChip (unused). Barrel: [index.ts](src/components/ui/index.ts).
+- **Purpose:** Reusable presentational primitives. **Files:** Button, Card, Input/Textarea/Select, Badge — all used. Barrel: [index.ts](src/components/ui/index.ts). (The formerly-unused ProgressBar/ScoreRing/Stepper/ToggleChip were removed.)
 - **Dependencies:** `lib/utils.ts` (`cn`), `lib/types.ts` (variant types).
 
 ### `src/components/layout/`
@@ -191,7 +196,7 @@ ReplyPilot/
 - **Purpose:** Source of truth for schema, RLS policies, and RPCs (not auto-applied; run manually per [README.md:73-79](README.md#L73-L79)). **Files:** [schema.sql](supabase/schema.sql) (core tables + seed templates), [style-memory-schema.sql](supabase/style-memory-schema.sql) (pgvector tables + RPCs), [usage-limits-schema.sql](supabase/usage-limits-schema.sql) (counters + `increment_usage`).
 
 ### Root config
-- [middleware.ts](middleware.ts) — **active** middleware (CSP + auth). [next.config.ts](next.config.ts) — static security headers. [tailwind.config.ts](tailwind.config.ts) — design tokens. [jest.config.ts](jest.config.ts) — test config. [tsconfig.json](tsconfig.json) — `@/*` → `src/*` path alias.
+- [middleware.ts](middleware.ts) — the (single, root) middleware (CSP + auth). [next.config.ts](next.config.ts) — static security headers. [tailwind.config.ts](tailwind.config.ts) — design tokens. [jest.config.ts](jest.config.ts) — test config. [tsconfig.json](tsconfig.json) — `@/*` → `src/*` path alias.
 - [AGENTS.md](AGENTS.md) — **critical**: documents the security conventions that override normal intuition.
 
 ### `public/`
@@ -214,7 +219,7 @@ Feature-based, layered **Next.js monolith**. Layers:
 ### Separation of concerns
 - **Authorization lives in the database** (RLS), not in app code. [AGENTS.md](AGENTS.md) explicitly forbids redundant `.eq("user_id", …)` filters because RLS already scopes the anon-key client. **[High]** (In practice many call sites still add them — see §18.)
 - **Output validation lives at the sink**, not in middleware — e.g. CRLF header-injection checks happen inside the Gmail send route ([src/app/api/gmail/send/route.ts:14-16](src/app/api/gmail/send/route.ts#L14-L16)), per [AGENTS.md](AGENTS.md).
-- **Untrusted email HTML containment lives in an iframe sandbox** ([src/app/inbox/page.tsx:535-543](src/app/inbox/page.tsx#L535-L543)); the regex sanitizer is defence-in-depth only.
+- **Untrusted email HTML containment lives in an iframe sandbox** ([src/app/inbox/components/EmailHtmlFrame.tsx](src/app/inbox/components/EmailHtmlFrame.tsx)); the regex sanitizer is defence-in-depth only.
 
 ### Request flow (high level)
 
@@ -278,14 +283,13 @@ RootLayout (server)               src/app/layout.tsx
 
 This traces a fresh page load (e.g. a logged-out user visiting `/inbox`). **[High]** unless noted.
 
-1. **Entry point — Middleware runs first.** The active middleware is the **root** [middleware.ts](middleware.ts) (confirmed: the build manifest's matcher `originalSource` includes the `missing` prefetch block and does *not* exclude `/api`, which matches the root file's `config.matcher`, not `src/middleware.ts`'s — [.next/dev/server/middleware-manifest.json:18-31](.next/dev/server/middleware-manifest.json#L18-L31)). **[High]**
+1. **Entry point — Middleware runs first.** There is a single middleware, the **root** [middleware.ts](middleware.ts) (an earlier duplicate `src/middleware.ts` was removed in commit `6c27e79`). **[High]**
    - Reads `NEXT_PUBLIC_SUPABASE_URL`/`ANON_KEY` ([middleware.ts:21-22](middleware.ts#L21-L22)).
    - Generates a base64 CSP **nonce** and builds the CSP string ([middleware.ts:24-25, 7-18](middleware.ts#L7-L18)). In dev it allows `'unsafe-eval'`.
    - Sets `x-nonce` + `Content-Security-Policy` on the request headers so Next can apply the nonce to its own scripts ([middleware.ts:29-31](middleware.ts#L29-L31)).
    - Creates a server Supabase client bound to request cookies and calls `auth.getUser()` ([middleware.ts:42-61](middleware.ts#L42-L61)).
 
-2. **Route guard.** `protectedRoutes = ["/dashboard", "/assessment", "/reports", "/settings"]` and `authRoutes = ["/login", "/signup"]` ([middleware.ts:4-5](middleware.ts#L4-L5)). If no user and path is protected → redirect to `/login?redirect=…`. If logged-in and on an auth route → redirect to `/dashboard`.
-   > **Important caveat [High]:** the active list **does not include `/inbox` or `/contacts`**, and includes `/assessment`/`/reports` which **do not exist as pages**. So middleware does *not* redirect anonymous visits to `/inbox` or `/contacts`. Data still doesn't leak (RLS + actions return empty without a user), but the redirect UX is missing for those routes. See §18.
+2. **Route guard.** `protectedRoutes = ["/dashboard", "/inbox", "/contacts", "/settings"]` and `authRoutes = ["/login", "/signup"]` ([middleware.ts:4-5](middleware.ts#L4-L5)). If no user and path is protected → redirect to `/login?redirect=…`. If logged-in and on an auth route → redirect to `/dashboard`. The list now matches the actual app pages (the previous stale `/assessment`/`/reports` entries and the missing `/inbox`/`/contacts` were corrected in commit `6c27e79`).
 
 3. **Configuration loading.** Env vars are read at request time inside middleware, the Supabase factories ([src/lib/supabase/server.ts:5-12](src/lib/supabase/server.ts#L5-L12), [client.ts:7-15](src/lib/supabase/client.ts#L7-L15)), and the integration routes (Google creds checked in [sync/route.ts:139-148](src/app/api/gmail/sync/route.ts#L139-L148)). There is no central config module. **[High]** Required vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `GEMINI_API_KEY` ([README.md:64-68](README.md#L64-L68)), plus `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI` and optionally `NEXT_PUBLIC_APP_URL` (used in [gmail/auth/route.ts:10](src/app/api/gmail/auth/route.ts#L10)).
 
@@ -327,11 +331,12 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 - **Action:** click "Sync". **Component/Handler:** `handleSync` in [inbox/page.tsx:118-138](src/app/inbox/page.tsx#L118-L138) → `POST /api/gmail/sync`.
 - **Backend:** [gmail/sync/route.ts](src/app/api/gmail/sync/route.ts):
   1. `getUser` guard; verify Google env vars; read `gmail_refresh_token` from `gym_settings`.
-  2. Build OAuth client; `gmail.users.threads.list` with `maxResults:200`, `labelIds:["INBOX"]`, `q:"newer_than:14d category:primary"` ([sync:168-173](src/app/api/gmail/sync/route.ts#L168-L173)).
-  3. For each thread: `threads.get(format:"full")` → `walk()` the MIME tree to extract best HTML/plain + inline CID images ([sync:43-95](src/app/api/gmail/sync/route.ts#L43-L95)) → `applyCids` → `sanitize` (strip script/handlers/js:/data: URLs) ([sync:97-117](src/app/api/gmail/sync/route.ts#L97-L117)).
-  4. Identify sender, `upsert` contact, `upsert` thread, `upsert` each message (HTML capped 200k chars, plain 10k) ([sync:205-285](src/app/api/gmail/sync/route.ts#L205-L285)).
-  5. **Auto-archive:** threads within the 14-day window whose `gmail_thread_id` is *not* in the current Primary set get `status:"archived"` ([sync:291-305](src/app/api/gmail/sync/route.ts#L291-L305)).
-  6. Update `gmail_last_synced_at`; return `{ synced, archived, gmailThreadCount, dropped }`.
+  2. Build OAuth client; `gmail.users.threads.list` with `maxResults:200`, `labelIds:["INBOX"]`, `q:"newer_than:14d category:primary"`.
+  3. **Incremental partition:** load each known thread's stored `gmail_history_id` in one query; a listed thread whose `historyId` is unchanged since last sync is **skipped** (no `threads.get`). Only new/changed threads go into `toFetch`.
+  4. **Parallel full fetch:** `mapPool(toFetch, 4, …)` fetches up to 4 threads concurrently; each task is wrapped in its own try/catch so a bad thread is recorded in `dropped[]` rather than crashing the run. Per thread: `threads.get(format:"full")` → `walk()` the MIME tree to extract best HTML/plain + inline CID images → `applyCids` → `sanitize` (strip script/handlers/js:/data: URLs).
+  5. Identify sender, `upsert` contact, `upsert` thread (now storing `gmail_history_id`), then **one batched upsert** of all message rows for the thread (HTML capped 200k chars, plain 10k).
+  6. **Auto-archive:** threads within the 14-day window whose `gmail_thread_id` is *not* in the current Primary set get `status:"archived"`.
+  7. Update `gmail_last_synced_at`; return `{ synced, skipped, archived, gmailThreadCount, resultSizeEstimate, dropped }`.
 - **DB:** writes to `contacts`, `email_threads`, `email_messages`, `gym_settings`.
 - **UI:** on success `loadThreads(pageSize)` refreshes the list; on error shows a dismissible banner.
 
@@ -345,14 +350,14 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
   4. `retrieveStyleContext(supabase, userId, inboundText)` — embeds inbound text, runs `match_style_samples` RPC (top-3 cosine), and reads `style_profile`; falls back to recent samples ([style-memory.ts:316-388](src/lib/style-memory.ts#L316-L388)).
   5. Build prompt: if style examples exist, tone rule = "match the examples"; else "friendly and warm, like a coach" ([generate:86-101](src/app/api/ai/generate/route.ts#L86-L101)). Constraints: under 100 words, one next step, no markdown/JSON.
   6. `gemini-2.5-flash-lite`, `maxOutputTokens:160`, `temperature:0.4`; strip code fences; return `{ subject:"Re: …", body }` ([generate:103-119](src/app/api/ai/generate/route.ts#L103-L119)).
-- **UI:** `handleGenerate` handles **both** a non-streaming JSON branch (current behaviour) and an SSE streaming branch (dormant — the route returns JSON, [generate:112](src/app/api/ai/generate/route.ts#L112)). **[High]** The draft fills the editable textarea.
+- **UI:** `handleGenerate` reads the JSON response and fills the editable textarea. (The earlier dormant SSE-streaming branch was removed when the inbox was split into components; the route returns plain JSON, [generate:112](src/app/api/ai/generate/route.ts#L112).) **[High]**
 
 ### Journey F — Edit & send  *(core)*
 - **Action:** edit textarea, click "Send Reply". **Handler:** `handleSend` ([inbox/page.tsx:367-390](src/app/inbox/page.tsx#L367-L390)).
   1. `POST /api/gmail/send` with `{ threadId, gmailThreadId, to, subject, body }`.
-  2. [gmail/send/route.ts](src/app/api/gmail/send/route.ts): `getUser`; **reject CR/LF in `to`/`subject`** to prevent header injection ([send:14-16](src/app/api/gmail/send/route.ts#L14-L16)); read refresh token; build raw RFC822 MIME; `gmail.users.messages.send({ raw, threadId })`; mark thread `replied`.
+  2. [gmail/send/route.ts](src/app/api/gmail/send/route.ts): `getUser`; **reject CR/LF in `to`/`subject`** to prevent header injection ([send:14-16](src/app/api/gmail/send/route.ts#L14-L16)); read refresh token; build raw RFC822 MIME; `gmail.users.messages.send({ raw, threadId })`. Then it **immediately persists the sent reply** as an `outbound` row in `email_messages` (keyed on the real Gmail message id, so the next sync dedupes against it), and marks the thread `replied` **and bumps `last_message_at`** to the send time so the conversation rises to the top — both mirroring Gmail without waiting for a sync.
   3. Then `approveGeneration(generation.id, draftBody, thread.id)` ([ai-generations.ts:7-35](src/app/actions/ai-generations.ts#L7-L35)): sets generation `sent` + thread `replied`, and **fire-and-forget** `addStyleSample` + `updateStyleProfile` (only if body > 20 chars).
-- **UI:** shows "Reply sent" + the `StyleFeedback` widget.
+- **UI:** the sent reply appears in the thread immediately; shows "Reply sent" + the `StyleFeedback` widget.
 - **Note [Medium]:** `generation` is usually `null` because `/api/ai/generate` returns `generation:null`; so `approveGeneration` and the post-send style sample often **don't run** on a fresh draft. The reliable style-learning paths are manual add-sample and backfill. (The generation row is created elsewhere only if pre-existing on the thread via `getThreadDetail`.) See §18.
 
 ### Journey G — Rate the reply ("Sound like you?")
@@ -362,9 +367,10 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 ### Journey H — Manage contacts
 - **Component:** [contacts/page.tsx](src/app/contacts/page.tsx). Filter tabs set `filter` → `listContacts(type)`. Click a type badge → inline `<select>` → `updateContactType` → optimistic local update.
 
-### Journey I — Add a style example manually
-- **Component:** Settings "Writing Style Examples" textarea → `handleAddExample` → `POST /api/style/add-sample` ([settings/page.tsx:46-76](src/app/settings/page.tsx#L46-L76)).
-- **Backend:** [style/add-sample/route.ts](src/app/api/style/add-sample/route.ts): min length 20; `enforceDailyLimit("add_sample")`; `addStyleSample`; `updateStyleProfile`; return new `sampleCount`.
+### Journey I — Add / view / remove style examples manually
+- **Add:** Settings "Writing Style Examples" textarea → `handleAddExample` → `POST /api/style/add-sample` ([settings/page.tsx](src/app/settings/page.tsx)). Backend [style/add-sample/route.ts](src/app/api/style/add-sample/route.ts): min length 20; `enforceDailyLimit("add_sample")`; `addStyleSample`; `updateStyleProfile`; return new `sampleCount`.
+- **View:** on load, Settings `GET /api/style/samples` and renders the saved examples (truncated, with word count + cluster). [samples/route.ts](src/app/api/style/samples/route.ts) `GET` lists `id, clean_body, word_count, context_cluster, created_at` (RLS-scoped).
+- **Remove:** the trash icon on an example → `DELETE /api/style/samples?id=…`. The route deletes the row (RLS-scoped), then `updateStyleProfile` recomputes the aggregate — and if the user removed their **last** sample, the profile is reset to neutral defaults so stale voice stops leaking into drafts ([style-memory.ts updateStyleProfile](src/lib/style-memory.ts)). Returns the new `sampleCount`.
 
 ### Journey J — Backfill historical sent mail
 - **Trigger:** manual `POST /api/style/backfill` (e.g. curl per [README.md:80-87](README.md#L80-L87)). Processes 20 outbound messages per call, excluding already-processed `message_id`s; returns `{ processed, skipped, remaining }`. ([style/backfill/route.ts](src/app/api/style/backfill/route.ts)).
@@ -378,7 +384,7 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 |---|---|---|---|
 | `/` | [page.tsx](src/app/page.tsx) | client | Marketing landing (193 lines) |
 | `/dashboard` | [dashboard/page.tsx](src/app/dashboard/page.tsx) | client | Stats + "needs reply" + quick actions |
-| `/inbox` | [inbox/page.tsx](src/app/inbox/page.tsx) | client | Thread list + reader + AI reply (core, 722 lines) |
+| `/inbox` | [inbox/page.tsx](src/app/inbox/page.tsx) | client | Thread list + reader + AI reply (core; orchestrator ~274 lines + [components/](src/app/inbox/components/)) |
 | `/contacts` | [contacts/page.tsx](src/app/contacts/page.tsx) | client | CRM table with filters + inline type edit |
 | `/settings` | [settings/page.tsx](src/app/settings/page.tsx) | client | Gym rules, style examples, Gmail connection |
 | `/login`, `/signup` | [login](src/app/login/page.tsx), [signup](src/app/signup/page.tsx) | client | Supabase auth |
@@ -395,28 +401,30 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 
 ### Major components
 
-**InboxPage** ([inbox/page.tsx:85-273](src/app/inbox/page.tsx#L85-L273))
+> Since the split, each lives in its own file under [src/app/inbox/components/](src/app/inbox/components/) (except `InboxPage`, which is the route component in [page.tsx](src/app/inbox/page.tsx)).
+
+**InboxPage** ([inbox/page.tsx](src/app/inbox/page.tsx))
 - **Purpose:** orchestrates the whole inbox: thread list, selection, detail load, sync, pagination, mobile list/thread toggle.
 - **State:** `threads, selectedId, detail, loadingThreads, loadingMore, pageSize, syncing, syncError, mobileView`.
 - **Children:** `ThreadView`, `EmptyInbox`.
 - **No props** (route component).
 
-**ThreadView** ([inbox/page.tsx:277-453](src/app/inbox/page.tsx#L277-L453))
+**ThreadView** ([components/ThreadView.tsx](src/app/inbox/components/ThreadView.tsx))
 - **Props:** `{ thread, onArchive, onUpdate, onBack }`.
 - **State:** `generating, generateError, draftBody, sending, sent, generation`.
 - **Children:** `MessageBubble` (per message), `ReplyPanel`, `StyleFeedback`.
 - **Responsibility:** generation + send + reject state machine.
 
-**EmailHtmlFrame** ([inbox/page.tsx:519-544](src/app/inbox/page.tsx#L519-L544))
-- **Props:** `{ html }`. Renders untrusted email HTML in a **sandboxed iframe** (`allow-scripts allow-popups allow-popups-to-escape-sandbox`, deliberately *no* `allow-same-origin`). Injects `<base target="_blank">`, responsive CSS, and a height-reporting script that `postMessage`s the content height back to the parent ([inbox/page.tsx:464-517](src/app/inbox/page.tsx#L464-L517)). Upgrades `http:` → `https:` for images.
+**EmailHtmlFrame** ([components/EmailHtmlFrame.tsx](src/app/inbox/components/EmailHtmlFrame.tsx))
+- **Props:** `{ html }`. Renders untrusted email HTML in a **sandboxed iframe** (`allow-scripts allow-popups allow-popups-to-escape-sandbox`, deliberately *no* `allow-same-origin`). Injects `<base target="_blank">`, responsive CSS, and a height-reporting script that `postMessage`s the content height back to the parent. Upgrades `http:` → `https:` for images.
 
-**MessageBubble** ([inbox/page.tsx:548-583](src/app/inbox/page.tsx#L548-L583))
-- **Props:** `{ message }`. Outbound → right-aligned cleaned text; inbound HTML → `EmailHtmlFrame`; inbound plain → left-aligned cleaned text.
+**MessageBubble** ([components/MessageBubble.tsx](src/app/inbox/components/MessageBubble.tsx))
+- **Props:** `{ message }`. Outbound → right-aligned cleaned text; inbound HTML → `EmailHtmlFrame`; inbound plain → left-aligned cleaned text. Strips the quoted reply chain (`stripQuotedText`) so each bubble shows only its new content, with a "•••" toggle to reveal the quoted history — mirroring Gmail's collapse behaviour.
 
-**ReplyPanel** ([inbox/page.tsx:587-663](src/app/inbox/page.tsx#L587-L663))
+**ReplyPanel** ([components/ReplyPanel.tsx](src/app/inbox/components/ReplyPanel.tsx))
 - **Props:** the generate/send/reject handlers + draft state. Three states: "Suggest a Reply" CTA; "Drafting…" spinner; editable textarea with Send/Clear.
 
-**StyleFeedback** ([inbox/page.tsx:670-703](src/app/inbox/page.tsx#L670-L703))
+**StyleFeedback** ([components/StyleFeedback.tsx](src/app/inbox/components/StyleFeedback.tsx))
 - **Props:** `{ generationId }`. Two-tap Yes/No → `/api/style/feedback`.
 
 **Navbar** ([Navbar.tsx](src/components/layout/Navbar.tsx))
@@ -429,7 +437,6 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 | `Card` (+sub) ([Card.tsx](src/components/ui/Card.tsx)) | `padding`, `hover` | `CardTitle`/`CardDescription` used in Settings |
 | `Input`/`Textarea`/`Select` ([Input.tsx](src/components/ui/Input.tsx)) | `label`, `error`, `hint`, `options` | Auto-derives `id` from label |
 | `Badge` ([Badge.tsx](src/components/ui/Badge.tsx)) | `variant`(5), `size` | Status chips |
-| `ProgressBar`,`ScoreRing`,`Stepper`,`ToggleChip` | — | **Unused** (verified) |
 
 ### Parent-child summary
 `InboxPage → ThreadView → { MessageBubble → EmailHtmlFrame, ReplyPanel, StyleFeedback }`. Dashboard defines local `StatCard`/`QuickAction`. Pages consume the shared `ui/` + `layout/` components and `actions/`.
@@ -458,12 +465,14 @@ The backend = **Server Actions** + **Route Handlers** + **domain library** + **P
 |---|---|---|---|---|---|
 | `/api/gmail/auth` | GET | — | 302 → Google consent | redirect to `/login` if unauth | Google OAuth |
 | `/api/gmail/callback` | GET | `?code`/`?error` | 302 → `/settings?...` | error/code check | Google, `gym_settings` |
-| `/api/gmail/sync` | POST | — | `{synced,archived,gmailThreadCount,dropped}` | unauth 401; env-var check 500; "Gmail not connected" 400 | Gmail, `contacts`/`email_threads`/`email_messages`/`gym_settings` |
+| `/api/gmail/sync` | POST | — | `{synced,skipped,archived,gmailThreadCount,resultSizeEstimate,dropped}` | unauth 401; env-var check 500; "Gmail not connected" 400 | Gmail, `contacts`/`email_threads`/`email_messages`/`gym_settings` |
 | `/api/gmail/send` | POST | `{threadId,gmailThreadId,to,subject,body}` | `{success:true}` | **CRLF check on to/subject**; unauth 401; not-connected 400 | Gmail, `email_threads` |
 | `/api/ai/generate` | POST | `{threadId,subject,messages}` | `{generation,subject,body}` | unauth 401; daily limit 429; LLM error 500 | Gemini, `gym_settings`, `style_*`, `usage_counters` |
 | `/api/style/add-sample` | POST | `{body}` | `{ok,sampleCount}` | min 20 chars 400; limit 429; save fail 500 | Gemini embed, `style_samples`/`style_profile` |
 | `/api/style/backfill` | POST | — | `{processed,skipped,remaining}` | unauth 401; query fail 500 | `email_messages`→`style_samples` |
 | `/api/style/feedback` | POST | `{generationId,rating}` | `{ok:true}` | rating allowlist; ownership 404 | `style_feedback`, `apply_style_feedback` |
+| `/api/style/samples` | GET | — | `{samples[]}` | unauth 401 | `style_samples` (RLS-scoped) |
+| `/api/style/samples` | DELETE | `?id` | `{ok,sampleCount}` | unauth 401; missing-id 400 | `style_samples`, `updateStyleProfile` |
 | `/api/style/status` | GET | — | `{sampleCount,toneScore,avgWordCount,updatedAt}` | unauth 401 | `style_profile` |
 | `/auth/callback` | GET | `?code`,`?next` | 302 | exchange error → `/login?error` | Supabase Auth |
 
@@ -474,8 +483,8 @@ The backend = **Server Actions** + **Route Handlers** + **domain library** + **P
 - `detectCluster`, `computeToneScore`, `extractGreeting`, `extractSignoff` — heuristics.
 - `embedText` — Gemini `gemini-embedding-001`, native 3072-dim **truncated to 768 + renormalized** to fit the pgvector schema & IVFFlat index ([style-memory.ts:146-181](src/lib/style-memory.ts#L146-L181)). Returns `null` on failure (never throws).
 - `addStyleSample` — clean → word-count gate (10–500) → embed → insert; idempotent on duplicate; returns `{saved,reason}`.
-- `updateStyleProfile` — recompute aggregate profile from latest 100 samples; upsert.
-- `retrieveStyleContext` — embed inbound + read profile (parallel); `match_style_samples` RPC top-3; fallback to recent; returns `null` if no samples.
+- `updateStyleProfile` — recompute aggregate profile from latest 100 samples; upsert. If **no samples remain** (e.g. the user deleted them all), it resets the profile to neutral defaults (`sample_count:0, tone_score:0.5, …`) so a stale voice is not injected into future drafts.
+- `retrieveStyleContext` — embed inbound + read profile (parallel); `match_style_samples` RPC top-3 (now ranked by cosine distance **scaled by feedback `weight`**); fallback to recent; returns `null` if no samples.
 - `buildStylePromptSection` — formats profile + examples into prompt text.
 
 **`src/lib/usage-limits.ts`** — `enforceDailyLimit(supabase, kind)` calls `increment_usage` RPC; **fails open** on RPC error ([usage-limits.ts:37-67](src/lib/usage-limits.ts#L37-L67)). Defaults: `generate:200/day`, `add_sample:50/day`.
@@ -520,7 +529,7 @@ auth.users (Supabase-managed)
 |---|---|---|---|
 | `gym_settings` | Per-user gym name, reply rules, **Gmail email + refresh token**, last-sync time | settings, gmail/*, ai/generate | `unique(user_id)`; RLS all |
 | `contacts` | CRM of senders | contacts page, sync | `unique(user_id,email)`; type check; RLS all |
-| `email_threads` | Grouped Gmail conversations | inbox, dashboard, sync | `unique(user_id,gmail_thread_id)`; status check; indexes on `(user_id,status)` and `(user_id,last_message_at desc)` |
+| `email_threads` | Grouped Gmail conversations | inbox, dashboard, sync | `unique(user_id,gmail_thread_id)`; status check; **`gmail_history_id`** (lets sync skip unchanged threads); indexes on `(user_id,status)` and `(user_id,last_message_at desc)` |
 | `email_messages` | Individual messages (raw HTML/plain body) | thread detail, sync, backfill | `unique(gmail_message_id)`; FK thread cascade; **RLS via parent thread's user_id** (subquery policy) |
 | `ai_generations` | AI draft + outcome lifecycle | generations action, feedback | status/risk/type checks; FK thread cascade; RLS all |
 | `templates` | Reusable email templates (5 system rows seeded) | — *(no app reads found)* | RLS: own + `is_system` readable |
@@ -532,7 +541,7 @@ auth.users (Supabase-managed)
 | `usage_counters` | Daily per-kind call counts | usage-limits | PK `(user_id,day,kind)`; **no insert/update policy** — writes only via `increment_usage` (security definer) |
 
 ### RPC functions
-- `match_style_samples(query_emb vector(768), match_count int=3)` — cosine kNN over `style_samples`, security **invoker** (RLS applies), `where embedding is not null and word_count>=10` ([style-memory-schema.sql:96-124](supabase/style-memory-schema.sql#L96-L124)).
+- `match_style_samples(query_emb vector(768), match_count int=3)` — kNN over `style_samples`, security **invoker** (RLS applies), `where embedding is not null and word_count>=10`. **Ranking now blends in feedback `weight`** (`effective_rank = cosine_distance * (1.0 / weight)`), so a "👍"-boosted sample surfaces first and a "wrong style"-demoted one sinks; it returns `weight` in the result row. Trade-off: the `ORDER BY` can no longer be served by the IVFFlat distance index, so it does a per-user scan+sort (fine at per-user sample volumes). ([style-memory-schema.sql](supabase/style-memory-schema.sql)).
 - `apply_style_feedback(p_generation_id, p_rating)` — adjusts sample `weight` by rating delta, clamped 0.1–2.0, security invoker ([style-memory-schema.sql:129-153](supabase/style-memory-schema.sql#L129-L153)).
 - `increment_usage(p_kind, p_limit)` — atomic upsert+increment, returns `(new_count, exceeded)`, security **definer** with `search_path=public` ([usage-limits-schema.sql:27-46](supabase/usage-limits-schema.sql#L27-L46)).
 
@@ -542,7 +551,7 @@ auth.users (Supabase-managed)
 - Style: outbound text → `style_samples` (+embedding) → recompute `style_profile`; feedback adjusts `weight`.
 - Usage: each billed call increments `usage_counters` for `(user, today, kind)`.
 
-> **Observation [Medium]:** `weight` in `style_samples` is written by feedback, but `match_style_samples` orders purely by cosine distance and does **not** multiply by `weight`. So feedback currently affects the column but not retrieval ranking. (Stated as current behaviour, not a recommendation.)
+> **Note [High]:** `weight` in `style_samples` is written by feedback **and now consumed by retrieval** — `match_style_samples` divides cosine distance by `weight`, so the "Sound like you? Yes/No" feedback actually reorders which examples get injected into future drafts (changed in commit `13b9e29`). (This resolves the earlier "weight written but unused" gap.)
 
 > **Note [Medium]:** `style_samples.embedding` is `vector(768)` and the code truncates Gemini's 3072-dim output to 768 + renormalizes; comments explain the IVFFlat index can't exceed ~2000 dims ([style-memory.ts:146-164](src/lib/style-memory.ts#L146-L164)).
 
@@ -593,7 +602,7 @@ No global store, so navigating between Dashboard and Inbox **refetches** threads
 - **Secondary checks:** every action/route calls `getUser()` and returns 401/empty if absent; feedback route additionally verifies generation ownership before acting ([feedback:30-39](src/app/api/style/feedback/route.ts#L30-L39)).
 
 ### Protected routes
-Enforced by the **active root** middleware's `protectedRoutes`/`authRoutes` lists ([middleware.ts:4-5](middleware.ts#L4-L5)). **Caveat [High]:** that list guards `/dashboard` and `/settings` (good) plus non-existent `/assessment`/`/reports`, but **omits `/inbox` and `/contacts`** — those pages aren't redirected when logged out (data still protected by RLS). The dead [src/middleware.ts](src/middleware.ts) has the "correct" list but is not the one Next.js loads (see §4/§5/§18).
+Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes` lists ([middleware.ts:4-5](middleware.ts#L4-L5)). The list now correctly guards all four app pages — `/dashboard`, `/inbox`, `/contacts`, `/settings` — redirecting anonymous visits to `/login` and bouncing logged-in users off `/login`/`/signup`. (The earlier stale entries and the duplicate `src/middleware.ts` were fixed/removed in commit `6c27e79`.) RLS remains the actual data boundary; the middleware is UX/defence-in-depth.
 
 ---
 
@@ -636,7 +645,7 @@ Enforced by the **active root** middleware's `protectedRoutes`/`authRoutes` list
 | 4 | **Inbox reading** | `/inbox` | [inbox/page.tsx](src/app/inbox/page.tsx), [threads.ts](src/app/actions/threads.ts) | `email_threads`,`email_messages`,`contacts` | `listThreads`,`getThreadDetail` | ThreadView, MessageBubble, EmailHtmlFrame |
 | 5 | **AI reply generation** | "Suggest a Reply" | [ai/generate](src/app/api/ai/generate/route.ts), [style-memory.ts](src/lib/style-memory.ts), [usage-limits.ts](src/lib/usage-limits.ts) | `gym_settings`,`style_*`,`usage_counters` | Gemini | ReplyPanel |
 | 6 | **Send reply** | "Send Reply" | [gmail/send](src/app/api/gmail/send/route.ts), [ai-generations.ts](src/app/actions/ai-generations.ts) | `email_threads`,`ai_generations`,`style_samples` | Gmail API | ReplyPanel |
-| 7 | **Style learning** | sends, settings paste, backfill | [style-memory.ts](src/lib/style-memory.ts), [style/*](src/app/api/style/) | `style_samples`,`style_profile`,`style_feedback` | Gemini embed + RPCs | StyleFeedback, settings |
+| 7 | **Style learning** | sends, settings paste/list/delete, backfill | [style-memory.ts](src/lib/style-memory.ts), [style/*](src/app/api/style/) (incl. [samples](src/app/api/style/samples/route.ts)) | `style_samples`,`style_profile`,`style_feedback` | Gemini embed + RPCs | StyleFeedback, settings |
 | 8 | **Style feedback** | "Sound like you?" | [style/feedback](src/app/api/style/feedback/route.ts) | `style_feedback`,`style_samples` | `apply_style_feedback` | StyleFeedback |
 | 9 | **Contacts CRM** | `/contacts` | [contacts/page.tsx](src/app/contacts/page.tsx), [contacts.ts](src/app/actions/contacts.ts) | `contacts` | `listContacts`,`updateContactType` | Badge |
 | 10 | **Gym rules/settings** | `/settings` | [settings/page.tsx](src/app/settings/page.tsx), [gym-settings.ts](src/app/actions/gym-settings.ts) | `gym_settings` | save/get/disconnect | Card, Input, Textarea |
@@ -702,7 +711,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 49. **[src/app/api/style/__tests__/add-sample.test.ts](src/app/api/style/__tests__/add-sample.test.ts)** — route test.
 50. **[README.md](README.md)** — product + setup overview.
 
-> **Dead/lower-value-for-understanding:** [src/middleware.ts](src/middleware.ts) (not loaded), `ui/ScoreRing|Stepper|ProgressBar|ToggleChip` (unused). Listed here only so you don't waste time on them.
+> **Not in this top-50 but worth knowing:** the inbox sub-components in [src/app/inbox/components/](src/app/inbox/components/) (`ThreadView`, `MessageBubble`, `EmailHtmlFrame`, `ReplyPanel`, `StyleFeedback`) and [src/app/api/style/samples/route.ts](src/app/api/style/samples/route.ts) (list/delete examples) — both introduced/extracted in the latest change set. The previously-listed dead `src/middleware.ts` and the unused `ui/ScoreRing|Stepper|ProgressBar|ToggleChip` have since been **deleted**.
 
 ---
 
@@ -712,7 +721,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 ```
 [Input] User clicks "Suggest a Reply" (thread messages in component state)
-   ↓  handleGenerate() — inbox/page.tsx:301
+   ↓  handleGenerate() — inbox/components/ThreadView.tsx
 [Validation] none client-side beyond having a thread
    ↓  fetch POST /api/ai/generate  { threadId, subject, messages }
 [API] ai/generate/route.ts
@@ -735,7 +744,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 ```
 [Input] edited draftBody + replyTo
-   ↓ handleSend() — inbox/page.tsx:367
+   ↓ handleSend() — inbox/components/ThreadView.tsx
 [Validation] requires draftBody.trim() && replyTo (client)
    ↓ fetch POST /api/gmail/send {threadId,gmailThreadId,to,subject,body}
 [API] gmail/send/route.ts
@@ -743,7 +752,8 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
    → CRLF check on to/subject  (400 "Invalid header value")  ← sink validation
    → read gym_settings.gmail_refresh_token
    → build raw RFC822 MIME → gmail.users.messages.send({raw,threadId})
-   → update email_threads.status='replied'
+   → upsert sent reply into email_messages (outbound, keyed on real msg id)
+   → update email_threads.status='replied', last_message_at=now
    ↓
 [then] approveGeneration(genId, body, threadId)  (only if a generation exists)
    → ai_generations.status='sent', final_body
@@ -761,11 +771,12 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
    ↓ POST /api/gmail/sync
 [API] auth → env check → read refresh token
    → threads.list(q:"newer_than:14d category:primary", max 200)
-   → for each: threads.get(full) → walk() MIME → applyCids → sanitize
-        → upsert contacts → upsert email_threads → upsert email_messages
+   → load known gmail_history_id per thread; skip unchanged threads
+   → mapPool(changed, 4): threads.get(full) → walk() MIME → applyCids → sanitize
+        → upsert contact → upsert email_threads(+gmail_history_id) → batched upsert email_messages
    → auto-archive threads not in current Primary set (14d window)
    → update gym_settings.gmail_last_synced_at
-[Response] {synced,archived,gmailThreadCount,dropped}
+[Response] {synced,skipped,archived,gmailThreadCount,resultSizeEstimate,dropped}
 [UI] loadThreads() refreshes list / shows error banner
 ```
 
@@ -819,12 +830,12 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 ### Query optimization
 - Indexes on `email_threads(user_id,status)` and `(user_id,last_message_at desc)` support the inbox queries ([schema.sql:62-63](supabase/schema.sql#L62-L63)).
-- pgvector **IVFFlat** cosine index (lists=50) for style retrieval ([style-memory-schema.sql:43-46](supabase/style-memory-schema.sql#L43-L46)); embeddings truncated to 768 dims to fit index limits + reduce cost/latency.
+- pgvector **IVFFlat** cosine index (lists=50) on `style_samples.embedding` ([style-memory-schema.sql](supabase/style-memory-schema.sql)); embeddings truncated to 768 dims to fit index limits + reduce cost/latency. Note: since `match_style_samples` now scales distance by feedback `weight`, the `ORDER BY` is a per-user scan+sort rather than an index-served kNN (acceptable because RLS scopes each query to one user's samples).
 - `getThreadDetail` does two round-trips (thread+messages join, then latest generation) ([threads.ts:28-45](src/app/actions/threads.ts#L28-L45)).
 
 ### Network requests
 - Generation: embedding + profile fetched in parallel inside `retrieveStyleContext` ([style-memory.ts:323-330](src/lib/style-memory.ts#L323-L330)).
-- **Sync is sequential N+1:** one `threads.get` per thread, then per-message and per-contact upserts in a loop, up to 200 threads in one serverless call ([sync:179-285](src/app/api/gmail/sync/route.ts#L179-L285)). Backfill is deliberately batched (20) to respect function timeouts.
+- **Sync is now incremental + bounded-parallel:** threads whose `gmail_history_id` is unchanged are skipped entirely (no `threads.get`); the remainder are fetched 4-at-a-time via `mapPool`, and each thread's messages are written in a single batched upsert. This replaced the previous strictly-sequential N+1 loop, cutting both API round-trips and DB writes on a typical re-sync. Still capped at 200 listed threads per serverless invocation; backfill remains batched (20) for the same timeout reason. **[High]**
 - Prompt inputs are aggressively truncated (last 2 messages ×180 chars; inbound ×400; embed ×1000; raw email ×12000) to control token cost/latency ([generate:9,59-75](src/app/api/ai/generate/route.ts#L59-L75), [style-memory.ts:20](src/lib/style-memory.ts#L20)).
 
 ### State update patterns
@@ -836,25 +847,23 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 # 18. Technical Debt Inventory
 
+> Several items from the previous revision have been **resolved** and are no longer debt: the duplicate/misconfigured middleware (now a single correct file), the 722-line `inbox/page.tsx` (split into `inbox/components/*`), the strictly-sequential sync N+1 (now incremental + parallel), `weight` being unused in ranking (now consumed by `match_style_samples`), and the unused deps/components/SSE branch (deleted). They're called out here only so a reader of the old doc isn't confused.
+
 ### High Risk
-1. **Duplicate middleware; the active one guards the wrong routes.** [src/middleware.ts](src/middleware.ts) is **dead** (the build manifest matches root [middleware.ts](middleware.ts) — [.next/dev/server/middleware-manifest.json:30](.next/dev/server/middleware-manifest.json#L30)). The active list protects non-existent `/assessment`/`/reports` and **omits `/inbox`,`/contacts`** ([middleware.ts:4](middleware.ts#L4)). *Why high:* confusing, error-prone, and the guard intent is silently wrong (RLS saves it from being a data breach). **[High]**
-2. **Plaintext Gmail refresh tokens** in `gym_settings` ([schema.sql:12](supabase/schema.sql#L12)). *Why high:* long-lived read/send/modify access to a real mailbox; a DB dump or anon-key path bug exposes it. **[High]**
-3. **Style learning from live sends often doesn't fire.** `/api/ai/generate` returns `generation:null` ([generate:112](src/app/api/ai/generate/route.ts#L112)), so `approveGeneration`'s `addStyleSample` path is usually skipped on fresh drafts ([inbox/page.tsx:383-385](src/app/inbox/page.tsx#L383-L385)). *Why high:* the headline feature's primary feedback loop is partially inert; learning effectively depends on manual add-sample/backfill. **[Medium-High]** (Confidence Medium on real-world frequency since a thread could carry a pre-existing generation.)
+1. **Plaintext Gmail refresh tokens** in `gym_settings` ([schema.sql:12](supabase/schema.sql#L12)). *Why high:* long-lived read/send/modify access to a real mailbox; a DB dump or anon-key path bug exposes it. **[High]**
+2. **Style learning from live sends often doesn't fire.** `/api/ai/generate` returns `generation:null` ([generate:112](src/app/api/ai/generate/route.ts#L112)), so `approveGeneration`'s `addStyleSample` path is usually skipped on fresh drafts. *Why high:* the headline feature's send-time feedback loop is partially inert; learning effectively depends on manual add-sample/backfill. **[Medium-High]** (Confidence Medium on real-world frequency since a thread could carry a pre-existing generation.)
 
 ### Medium Risk
-4. **722-line `inbox/page.tsx`** mixing orchestration, an iframe email renderer with injected scripts, HTML cleaning, and the reply state machine. *Why:* hard to test/debug; the riskiest UI lives here. **[High]**
-5. **Quadruplicated HTML/text cleaning** with subtle differences: `cleanEmailText` ([style-memory.ts:33](src/lib/style-memory.ts#L33)), `toPlainText` ([generate:11](src/app/api/ai/generate/route.ts#L11)), `cleanBody` ([inbox/page.tsx:21](src/app/inbox/page.tsx#L21)), `sanitize` ([sync:110](src/app/api/gmail/sync/route.ts#L110)). *Why:* will drift. **[High]**
-6. **Gmail sync N+1 + 200-thread single invocation** ([sync:168-285](src/app/api/gmail/sync/route.ts#L168-L285)). *Why:* timeout/rate-limit risk as volume grows. **[Medium]**
-7. **Value-interpolated `in(...)` filters** in sync/backfill ([sync:297-303](src/app/api/gmail/sync/route.ts#L297-L303), [backfill:40-46](src/app/api/style/backfill/route.ts#L40-L46)) — brushes the "no interpolation in filters" rule and has a documented URL-budget ceiling. **[Medium]**
-8. **`weight` is written but unused in retrieval ranking** (`match_style_samples` ignores it). *Why:* feedback's stated purpose is partly unrealized. **[Medium]**
-9. **Redundant `.eq("user_id")` filters** contradict [AGENTS.md](AGENTS.md) (e.g. [threads.ts:16](src/app/actions/threads.ts#L16), [contacts.ts:14](src/app/actions/contacts.ts#L14)). Harmless defense-in-depth but the kind of drift the doc warns about. **[High]**
-10. **Thin test coverage** — only `style-memory.ts` and `style/*` are tested ([jest.config.ts:13](jest.config.ts#L13)); the riskiest code (sync, send, middleware, generate) is untested. **[High]**
+3. **Multiple near-duplicate HTML/text cleaners** with subtle differences: `cleanEmailText` ([style-memory.ts:33](src/lib/style-memory.ts#L33)), `toPlainText` ([generate:11](src/app/api/ai/generate/route.ts#L11)), `cleanBody` (now in [inbox/components/MessageBubble.tsx](src/app/inbox/components/MessageBubble.tsx)), `sanitize` ([sync](src/app/api/gmail/sync/route.ts)). *Why:* will drift — the inbox copy now also owns quoted-text stripping, widening the divergence. **[High]**
+4. **200-thread single invocation for sync.** Incremental skip + 4-way parallelism reduced the load, but a first sync (or a busy mailbox where many threads changed) still fetches up to 200 threads in one serverless call. *Why:* timeout/rate-limit risk at the tail. **[Medium]**
+5. **Value-interpolated `in(...)` filters** in sync/backfill ([sync](src/app/api/gmail/sync/route.ts), [backfill:40-46](src/app/api/style/backfill/route.ts#L40-L46)) — brushes the "no interpolation in filters" rule and has a documented URL-budget ceiling. **[Medium]**
+6. **Redundant `.eq("user_id")` filters** contradict [AGENTS.md](AGENTS.md) (e.g. [threads.ts:16](src/app/actions/threads.ts#L16), [contacts.ts:14](src/app/actions/contacts.ts#L14)). Harmless defense-in-depth but the kind of drift the doc warns about. (Note: the new `samples` route deliberately omits them, per the convention.) **[High]**
+7. **Thin test coverage** — only `style-memory.ts` and `style/*` are tested ([jest.config.ts](jest.config.ts)); the riskiest code (sync, send, middleware, generate) is untested. The sync rewrite (parallel `mapPool`, incremental partition) added logic with no tests. **[High]**
 
 ### Low Risk
-11. **Dead code / unused deps:** dormant SSE branch in `handleGenerate` ([inbox/page.tsx:326-364](src/app/inbox/page.tsx#L326-L364)); unused `ScoreRing`/`Stepper`/`ProgressBar`/`ToggleChip`; unused `recharts`/`framer-motion` (verified). **[High]**
-12. **Unused data model:** `templates` (seeded but unread), `scheduled_follow_ups`, `activity_logs`. **[High]**
-13. **Repo artifacts** (`ruvector.db` 1.5MB, `tsconfig.tsbuildinfo`, `.venv/`) present in tree. **[Medium]** (verify `.gitignore`).
-14. **`send` route doesn't call `approveGeneration` internally** — split responsibility between route (sends + marks replied) and action (marks sent + learns). Minor coupling. **[Medium]**
+8. **Unused data model:** `templates` (seeded but unread), `scheduled_follow_ups`, `activity_logs`. **[High]**
+9. **Repo artifacts** (`ruvector.db`, `tsconfig.tsbuildinfo`, `.venv/`) present in tree. **[Medium]** (verify `.gitignore`).
+10. **Split send responsibility** — the `send` route now sends, persists the outbound message, and marks the thread replied; `approveGeneration` separately marks the generation sent + triggers learning. Two writers touch the same thread/generation lifecycle. Minor coupling. **[Medium]**
 
 ---
 
@@ -866,9 +875,9 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 3. [src/lib/types.ts](src/lib/types.ts) — the whole domain in one screen.
 4. [supabase/schema.sql](supabase/schema.sql) + [supabase/style-memory-schema.sql](supabase/style-memory-schema.sql) + [usage-limits-schema.sql](supabase/usage-limits-schema.sql) — the data model **is** the security model.
 5. [src/lib/supabase/server.ts](src/lib/supabase/server.ts) & [client.ts](src/lib/supabase/client.ts) — how a request becomes a user-scoped DB client.
-6. [middleware.ts](middleware.ts) (root) — auth + CSP. Know that [src/middleware.ts](src/middleware.ts) is **dead**.
+6. [middleware.ts](middleware.ts) (root) — auth + CSP. It's the only middleware (the old `src/middleware.ts` duplicate is gone).
 7. [src/lib/style-memory.ts](src/lib/style-memory.ts) — the core engine; read with [README.md:125-136](README.md#L125-L136).
-8. [src/app/inbox/page.tsx](src/app/inbox/page.tsx) + [api/ai/generate](src/app/api/ai/generate/route.ts) + [api/gmail/sync](src/app/api/gmail/sync/route.ts) + [api/gmail/send](src/app/api/gmail/send/route.ts) — the end-to-end core loop.
+8. [src/app/inbox/page.tsx](src/app/inbox/page.tsx) + [inbox/components/](src/app/inbox/components/) + [api/ai/generate](src/app/api/ai/generate/route.ts) + [api/gmail/sync](src/app/api/gmail/sync/route.ts) + [api/gmail/send](src/app/api/gmail/send/route.ts) — the end-to-end core loop.
 
 ### Concepts to learn first
 - **Next.js App Router** dual backend: Server Actions vs Route Handlers, and when each is used here.
@@ -884,8 +893,9 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 - The **iframe sandbox flags** in `EmailHtmlFrame` (never add `allow-same-origin`).
 - The **embedding dimension contract** (768) — tied to SQL `vector(768)` + IVFFlat; changing models needs a coordinated migration.
 - The **CRLF header check** in `gmail/send`.
-- The **HTML cleaners** (four copies — change one, the others drift).
-- **Middleware route lists** (already partially wrong; edit carefully and remember the dead duplicate).
+- The **HTML cleaners** (several near-duplicate copies — change one, the others drift).
+- **Middleware route lists** (now correct; keep them in sync with the actual pages when you add a route).
+- The **per-thread `gmail_history_id` skip** in sync — if you change how/when it's written, you can silently stop ingesting updates to existing threads.
 
 ### Suggested first tasks (to learn safely)
 - Read-only: trace one generate→send cycle with logging.
@@ -899,11 +909,12 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 ### Product / features
 - **Reply Rules / gym context** — free-text rules (`gym_settings.gym_context`) injected verbatim into every generation prompt.
 - **Style learning / style memory** — retrieval-based personalization from past replies (`style_samples` + `style_profile` + `style_feedback`).
-- **Style sample** — one cleaned outbound email stored with an embedding + weight.
+- **Style sample** — one cleaned outbound email stored with an embedding + `weight`. The `weight` (raised/lowered by feedback) now scales retrieval ranking, and samples can be listed/removed from Settings.
 - **Style profile** — aggregate stats (tone score, avg words, greetings/sign-offs) over a user's samples.
 - **Backfill** — batch import of historical sent emails into style memory.
-- **Sync** — pulling recent Gmail Primary threads into the DB.
+- **Sync** — pulling recent Gmail Primary threads into the DB; **incremental** (skips threads whose `gmail_history_id` is unchanged) and **bounded-parallel** (`mapPool`, 4 at a time).
 - **Auto-archive** — marking threads `archived` when they leave the Primary set within the 14-day window.
+- **`gmail_history_id`** — Gmail's per-thread change marker, stored on `email_threads` so a re-sync can skip unchanged threads.
 
 ### Components
 - **UserProvider / useUser** — global auth context.
@@ -939,7 +950,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 ---
 
 ## Confidence & Limitations Summary
-- **High confidence:** folder/route structure, data model, RLS-as-authz, the generate/sync/send flows, the active-vs-dead middleware finding (verified against the build manifest), unused deps/components (verified by grep).
+- **High confidence:** folder/route structure (incl. the inbox component split), data model (incl. `gmail_history_id`), RLS-as-authz, the generate/sync/send flows, the single corrected middleware, feedback-weighted style retrieval, and the style-sample list/delete endpoint — all read directly from the current source.
 - **Medium confidence:** real-world frequency of the "generation:null skips learning" issue (depends on pre-existing generation rows); exact caching behaviour of Next 16 RSC; secret-file contents (`.env.local.example` not read in full); `connection()` intent.
 - **Could not be determined from the codebase:** production env-var values; whether the SQL files have actually been applied to the live DB (they are manual); runtime performance numbers; whether `templates`/`scheduled_follow_ups`/`activity_logs` are used by anything outside this repo.
 
