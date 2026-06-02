@@ -7,9 +7,19 @@ export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const error = searchParams.get("error");
+  const state = searchParams.get("state");
 
   if (error || !code) {
     return NextResponse.redirect(`${origin}/settings?error=gmail_denied`);
+  }
+
+  // Verify the state parameter matches the cookie set in /api/gmail/auth.
+  // A missing or mismatched state means this request was not initiated by this
+  // session — reject it to prevent CSRF (attacker linking their Gmail to the
+  // victim's account).
+  const expectedState = request.cookies.get("oauth_gmail_state")?.value;
+  if (!state || !expectedState || state !== expectedState) {
+    return NextResponse.redirect(`${origin}/settings?error=gmail_invalid_state`);
   }
 
   const supabase = await createClient();
@@ -43,5 +53,8 @@ export async function GET(request: NextRequest) {
     { onConflict: "user_id" }
   );
 
-  return NextResponse.redirect(`${origin}/settings?connected=true`);
+  const response = NextResponse.redirect(`${origin}/settings?connected=true`);
+  // Clear the state cookie now that it has been consumed.
+  response.cookies.set("oauth_gmail_state", "", { maxAge: 0, path: "/" });
+  return response;
 }

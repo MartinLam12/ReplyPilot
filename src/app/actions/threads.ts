@@ -39,6 +39,7 @@ export async function getThreadDetail(threadId: string): Promise<EmailThread | n
     .from("ai_generations")
     .select("*")
     .eq("thread_id", threadId)
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(1)
     .single();

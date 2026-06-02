@@ -79,7 +79,8 @@ export async function POST(request: Request) {
   await supabase
     .from("email_threads")
     .update({ status: "replied", last_message_at: sentAt })
-    .eq("id", threadId);
+    .eq("id", threadId)
+    .eq("user_id", user.id);
 
   return NextResponse.json({ success: true });
 }

@@ -27,7 +27,8 @@ export async function approveGeneration(
   await supabase
     .from("email_threads")
     .update({ status: "replied" })
-    .eq("id", threadId);
+    .eq("id", threadId)
+    .eq("user_id", user.id);
 
   // ── Style learning: add this sent reply as a voice sample ─────────────────
   // Runs after DB update, never throws — a failure here must not affect the UX.
