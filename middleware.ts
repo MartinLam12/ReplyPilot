@@ -62,6 +62,13 @@ export async function middleware(request: NextRequest) {
     },
   });
 
+  // Stripe webhook requests arrive with no session cookie — bypass all auth logic.
+  if (request.nextUrl.pathname === "/api/stripe/webhook") {
+    supabaseResponse.headers.set("x-nonce", nonce);
+    supabaseResponse.headers.set("Content-Security-Policy", csp);
+    return supabaseResponse;
+  }
+
   const {
     data: { user },
   } = await supabase.auth.getUser();
