@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
         const periodEnd = getPeriodEnd(subscription);
 
         console.log("[webhook] checkout.session.completed: attempting update by stripe_customer_id", { customerId, subscriptionId });
-        const { error } = await supabase
+        const { error, count } = await supabase
           .from("profiles")
           .update({
             stripe_customer_id: customerId,
@@ -63,11 +63,11 @@ export async function POST(request: NextRequest) {
             subscription_status: "active",
             current_period_end: periodEnd,
             updated_at: new Date().toISOString(),
-          })
+          }, { count: "exact" })
           .eq("stripe_customer_id", customerId);
-        console.log("[webhook] checkout.session.completed: update-by-customerId result", { customerId, subscriptionId, error: error ?? null });
+        console.log("[webhook] checkout.session.completed: update-by-customerId result", { customerId, subscriptionId, error: error ?? null, count });
 
-        if (error) {
+        if (error || !count) {
           // stripe_customer_id may not be set yet on first checkout —
           // fall back to supabase uid stored in customer metadata.
           const customer = await stripe.customers.retrieve(customerId);
