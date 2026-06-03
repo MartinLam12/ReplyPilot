@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
         });
         const periodEnd = getPeriodEnd(subscription);
 
+        console.log("[webhook] checkout.session.completed: attempting update by stripe_customer_id", { customerId, subscriptionId });
         const { error } = await supabase
           .from("profiles")
           .update({
@@ -64,6 +65,7 @@ export async function POST(request: NextRequest) {
             updated_at: new Date().toISOString(),
           })
           .eq("stripe_customer_id", customerId);
+        console.log("[webhook] checkout.session.completed: update-by-customerId result", { customerId, subscriptionId, error: error ?? null });
 
         if (error) {
           // stripe_customer_id may not be set yet on first checkout —
@@ -78,6 +80,7 @@ export async function POST(request: NextRequest) {
             console.error("[webhook] no supabase_uid on customer:", customerId);
             break;
           }
+          console.log("[webhook] checkout.session.completed: attempting fallback update by uid", { customerId, subscriptionId, uid });
           const { error: err2 } = await supabase
             .from("profiles")
             .update({
@@ -88,6 +91,7 @@ export async function POST(request: NextRequest) {
               updated_at: new Date().toISOString(),
             })
             .eq("id", uid);
+          console.log("[webhook] checkout.session.completed: fallback update-by-uid result", { customerId, subscriptionId, uid, error: err2 ?? null });
           if (err2) {
             console.error("[webhook] checkout.session.completed update failed:", err2);
           } else {
