@@ -14,6 +14,7 @@ function upgradeHttpUrls(html: string): string {
 const BASE_STYLES = `
 <base target="_blank">
 <meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src * data: blob:; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; frame-src 'none';">
 <style>
   img{max-width:100%!important;height:auto}
   table{max-width:100%!important}

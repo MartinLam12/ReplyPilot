@@ -173,6 +173,42 @@ create policy "users own their activity_logs"
   with check (auth.uid() = user_id);
 
 -- ============================================================
+-- Profiles (subscription tracking, one row per user)
+-- ============================================================
+
+create table if not exists profiles (
+  id                    uuid primary key references auth.users on delete cascade,
+  stripe_customer_id    text,
+  subscription_status   text not null default 'inactive',
+  subscription_id       text,
+  current_period_end    timestamptz,
+  created_at            timestamptz default now(),
+  updated_at            timestamptz default now()
+);
+
+alter table profiles enable row level security;
+create policy "users read own profile"
+  on profiles for select
+  using (auth.uid() = id);
+-- Inserts and updates are done via service role in the webhook handler only.
+
+-- Auto-create a profile row when a new user signs up.
+create or replace function handle_new_user()
+returns trigger language plpgsql security definer as $$
+begin
+  insert into public.profiles (id)
+  values (new.id)
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure handle_new_user();
+
+-- ============================================================
 -- Seed system templates
 -- ============================================================
 insert into templates (name, type, subject, body, is_system) values

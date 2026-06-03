@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { createClient } from "@/lib/supabase/server";
+import { decryptToken } from "@/lib/token-crypto";
 import type { gmail_v1 } from "googleapis";
 
 // ─── MIME helpers ─────────────────────────────────────────────────────────────
@@ -159,13 +160,13 @@ export async function POST() {
     } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const missingEnv: string[] = [];
-    if (!process.env.GOOGLE_CLIENT_ID) missingEnv.push("GOOGLE_CLIENT_ID");
-    if (!process.env.GOOGLE_CLIENT_SECRET) missingEnv.push("GOOGLE_CLIENT_SECRET");
-    if (!process.env.GOOGLE_REDIRECT_URI) missingEnv.push("GOOGLE_REDIRECT_URI");
-    if (missingEnv.length) {
+    if (
+      !process.env.GOOGLE_CLIENT_ID ||
+      !process.env.GOOGLE_CLIENT_SECRET ||
+      !process.env.GOOGLE_REDIRECT_URI
+    ) {
       return NextResponse.json(
-        { error: `Missing env vars: ${missingEnv.join(", ")}` },
+        { error: "Service configuration error" },
         { status: 500 }
       );
     }
@@ -185,7 +186,7 @@ export async function POST() {
       process.env.GOOGLE_CLIENT_SECRET,
       process.env.GOOGLE_REDIRECT_URI
     );
-    oauth2Client.setCredentials({ refresh_token: settings.gmail_refresh_token });
+    oauth2Client.setCredentials({ refresh_token: decryptToken(settings.gmail_refresh_token) });
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
     const threadsResponse = await gmail.users.threads.list({
@@ -358,15 +359,19 @@ export async function POST() {
     const syncedThreadIds = threads.map((t) => t.id).filter((id): id is string => !!id);
     let archived = 0;
     if (syncedThreadIds.length) {
-      const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
-      const idList = `("${syncedThreadIds.join('","')}")`;
-      const { count } = await supabase
-        .from("email_threads")
-        .update({ status: "archived" }, { count: "exact" })
-        .neq("status", "archived")
-        .gte("last_message_at", fourteenDaysAgo)
-        .not("gmail_thread_id", "in", idList);
-      archived = count ?? 0;
+      // Reject any ID that is not a plain hex string (Gmail's documented format)
+      // before interpolating into the PostgREST filter string.
+      const safeIds = syncedThreadIds.filter((id) => /^[0-9a-f]+$/i.test(id));
+      if (safeIds.length) {
+        const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+        const { count } = await supabase
+          .from("email_threads")
+          .update({ status: "archived" }, { count: "exact" })
+          .neq("status", "archived")
+          .gte("last_message_at", fourteenDaysAgo)
+          .not("gmail_thread_id", "in", `(${safeIds.join(",")})`);
+        archived = count ?? 0;
+      }
     }
 
     await supabase

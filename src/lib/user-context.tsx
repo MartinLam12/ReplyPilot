@@ -44,7 +44,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const signOut = useCallback(async () => {
-    if (supabase) await supabase.auth.signOut();
+    if (supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // Proceed with local navigation even if the server-side revocation
+        // call fails. The middleware will catch any lingering session on the
+        // next protected request.
+      }
+    }
     window.location.href = "/";
   }, [supabase]); // eslint-disable-line react-hooks/exhaustive-deps
 

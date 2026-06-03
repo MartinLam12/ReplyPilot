@@ -46,7 +46,12 @@ export async function enforceDailyLimit(
   });
 
   if (error) {
-    console.error("[usage-limits] increment_usage failed — failing open:", error.message);
+    // Structured so this line is grep-able and distinguishable from one-off noise.
+    // A persistent stream of these means the usage_counters table/RPC is broken.
+    console.error(
+      "[usage-limits] increment_usage failed — failing open",
+      JSON.stringify({ kind, limit, ts: new Date().toISOString(), error: error.message })
+    );
     return { allowed: true, newCount: 0, limit };
   }
 

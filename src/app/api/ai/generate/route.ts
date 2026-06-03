@@ -56,12 +56,16 @@ export async function POST(request: Request) {
   const gymName    = gymSettings?.gym_name?.trim()    || "our gym";
   const gymContext = gymSettings?.gym_context?.trim() || "";
 
+  // Wrap each message in an XML tag so adversarial email bodies cannot inject
+  // text that looks like prompt instructions outside the conversation block.
   const conversationContext = (messages || [])
     .slice(-2)
-    .map((m: EmailMessage) =>
-      `${m.direction === "inbound" ? "THEM" : "US"}: ${toPlainText(m.body_text || "").slice(0, 180)}`
-    )
-    .join("\n\n");
+    .map((m: EmailMessage) => {
+      const role = m.direction === "inbound" ? "sender" : "us";
+      const text = toPlainText(m.body_text || "").slice(0, 180);
+      return `<email role="${role}">${text}</email>`;
+    })
+    .join("\n");
 
   const cleanSubject = (subject || "").replace(/^Re:\s*/i, "");
 
@@ -88,9 +92,10 @@ export async function POST(request: Request) {
     : "- Friendly and warm, like a coach";
 
   const prompt = `Write a reply for ${gymName}, a boxing/martial arts gym.
-${gymContext ? `\nReply rules — follow these exactly:\n${gymContext}\n` : ""}${styleSection ? `\n${styleSection}` : ""}Subject: ${subject || "(no subject)"}
-Conversation:
+${gymContext ? `\n<gym_rules>\n${gymContext}\n</gym_rules>\n` : ""}${styleSection ? `\n${styleSection}` : ""}<subject>${subject || "(no subject)"}</subject>
+<conversation>
 ${conversationContext}
+</conversation>
 
 Rules:
 - Under 100 words
@@ -98,7 +103,7 @@ ${toneRule}
 - Include one clear next step or question
 - No markdown, no JSON
 
-Return only the reply body text.`;
+Return only the reply body text. Do not reproduce XML tags in your response.`;
 
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
 

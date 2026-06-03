@@ -36,6 +36,11 @@ export async function approveGeneration(
   if (finalBody?.trim().length > 20) {
     await addStyleSample(supabase, user.id, finalBody, generationId ? { generationId } : {});
     await updateStyleProfile(supabase, user.id);
+  } else {
+    console.warn(
+      "[approveGeneration] style learning skipped — body too short",
+      JSON.stringify({ threadId, generationId: generationId ?? null, bodyLength: finalBody?.trim().length ?? 0 })
+    );
   }
 
   revalidatePath("/inbox");

@@ -62,21 +62,41 @@ export function ThreadView({
     if (!draftBody.trim() || !replyTo) return;
     setSending(true);
 
-    await fetch("/api/gmail/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        threadId: thread.id,
-        gmailThreadId: thread.gmail_thread_id,
-        to: replyTo,
-        subject: generation?.generated_subject || `Re: ${thread.subject}`,
-        body: draftBody,
-      }),
-    });
+    let sendOk = false;
+    let sendErrorMsg: string | null = null;
+    try {
+      const res = await fetch("/api/gmail/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: thread.id,
+          gmailThreadId: thread.gmail_thread_id,
+          to: replyTo,
+          subject: generation?.generated_subject || `Re: ${thread.subject}`,
+          body: draftBody,
+        }),
+      });
+      if (res.ok) {
+        sendOk = true;
+      } else {
+        const data = await res.json().catch(() => null);
+        sendErrorMsg =
+          (typeof data?.error === "string" && data.error) ||
+          `Failed to send email (HTTP ${res.status}). Try again.`;
+      }
+    } catch {
+      sendErrorMsg = "Failed to reach the server. Check your connection.";
+    }
 
-    // Record the sent reply for style learning on every send. A generation row
-    // only exists when one was loaded for this thread; pass it when present so
-    // its status is updated, but learning fires either way.
+    if (!sendOk) {
+      setGenerateError(sendErrorMsg);
+      setSending(false);
+      return;
+    }
+
+    // Only record the send and trigger style learning after confirmed delivery.
+    // A generation row only exists when one was loaded for this thread; pass it
+    // when present so its status is updated, but learning fires either way.
     await approveGeneration(draftBody, thread.id, generation?.id ?? null);
 
     setSent(true);

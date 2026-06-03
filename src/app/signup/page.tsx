@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui";
 import { Input } from "@/components/ui";
+import { Turnstile } from '@marsidev/react-turnstile';
 
 export default function SignupPage() {
   const [name, setName] = useState("");
@@ -13,6 +14,7 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,12 +25,21 @@ export default function SignupPage() {
       const { error: authError } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { name } },
+        options: {
+          data: { name },
+          captchaToken: turnstileToken,
+        },
       });
-      if (authError) throw authError;
+      // "User already registered" reveals account existence — always show the
+      // same confirmation screen so the email address cannot be enumerated.
+      if (authError && authError.message !== "User already registered") {
+        throw authError;
+      }
       setDone(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create account");
+      setError(err instanceof Error && err.message
+        ? "Something went wrong. Please try again."
+        : "Failed to create account");
     } finally {
       setLoading(false);
     }
@@ -98,6 +109,10 @@ export default function SignupPage() {
               required
               autoComplete="new-password"
               hint="At least 8 characters"
+            />
+            <Turnstile
+              siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+              onSuccess={(token) => setTurnstileToken(token)}
             />
             <Button type="submit" loading={loading} className="w-full">
               Create Account

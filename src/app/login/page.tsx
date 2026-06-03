@@ -5,12 +5,14 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui";
 import { Input } from "@/components/ui";
+import { Turnstile } from '@marsidev/react-turnstile'
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,11 +20,15 @@ export default function LoginPage() {
     setError("");
     try {
       const supabase = createClient();
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+        options: { captchaToken: turnstileToken }
+      });
       if (authError) throw authError;
       window.location.href = "/dashboard";
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to sign in");
+    } catch {
+      setError("Invalid email or password. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -64,6 +70,10 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete="current-password"
+            />
+            <Turnstile
+              siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+              onSuccess={(token) => setTurnstileToken(token)}
             />
             <Button type="submit" loading={loading} className="w-full">
               Sign In

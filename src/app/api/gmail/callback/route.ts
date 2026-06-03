@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { createClient } from "@/lib/supabase/server";
+import { encryptToken } from "@/lib/token-crypto";
 import type { NextRequest } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
     {
       user_id: user.id,
       gmail_email: gmailEmail,
-      gmail_refresh_token: tokens.refresh_token || "",
+      gmail_refresh_token: encryptToken(tokens.refresh_token || ""),
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" }

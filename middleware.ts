@@ -3,16 +3,19 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const protectedRoutes = ["/dashboard", "/inbox", "/contacts", "/settings"];
 const authRoutes = ["/login", "/signup"];
+// User must be logged in but does not need an active subscription.
+const subscriptionExemptRoutes = ["/subscribe"];
 
 function buildCSP(nonce: string): string {
   const devEval = process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'";
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${devEval}`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${devEval} https://challenges.cloudflare.com`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: blob: https: cid:",
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://challenges.cloudflare.com",
+    "frame-src 'self' https://challenges.cloudflare.com",
     "frame-ancestors 'none'",
   ].join("; ");
 }
@@ -40,6 +43,9 @@ export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request: { headers: requestHeaders } });
 
   const supabase = createServerClient(supabaseUrl, supabaseKey, {
+    cookieOptions: {
+      secure: process.env.NODE_ENV === "production",
+    },
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -62,20 +68,52 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  if (!user && protectedRoutes.some((route) => pathname.startsWith(route))) {
+  const isProtected = protectedRoutes.some((route) => pathname.startsWith(route));
+  const isSubscriptionExempt = subscriptionExemptRoutes.some((route) =>
+    pathname.startsWith(route)
+  );
+
+  if (!user && (isProtected || isSubscriptionExempt)) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/login";
     redirectUrl.searchParams.set("redirect", pathname);
     const redirectResponse = NextResponse.redirect(redirectUrl);
+    supabaseResponse.cookies.getAll().forEach((cookie) =>
+      redirectResponse.cookies.set(cookie.name, cookie.value, cookie)
+    );
     redirectResponse.headers.set("x-nonce", nonce);
     redirectResponse.headers.set("Content-Security-Policy", csp);
     return redirectResponse;
+  }
+
+  if (user && isProtected) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("subscription_status")
+      .eq("id", user.id)
+      .single();
+
+    if (profile?.subscription_status !== "active") {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/subscribe";
+      const redirectResponse = NextResponse.redirect(redirectUrl);
+      supabaseResponse.cookies.getAll().forEach((cookie) =>
+        redirectResponse.cookies.set(cookie.name, cookie.value, cookie)
+      );
+      redirectResponse.headers.set("x-nonce", nonce);
+      redirectResponse.headers.set("Content-Security-Policy", csp);
+      return redirectResponse;
+    }
   }
 
   if (user && authRoutes.some((route) => pathname.startsWith(route))) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
     const redirectResponse = NextResponse.redirect(redirectUrl);
+    // Copy any refreshed session cookies so the token update is not lost.
+    supabaseResponse.cookies.getAll().forEach((cookie) =>
+      redirectResponse.cookies.set(cookie.name, cookie.value, cookie)
+    );
     redirectResponse.headers.set("x-nonce", nonce);
     redirectResponse.headers.set("Content-Security-Policy", csp);
     return redirectResponse;
