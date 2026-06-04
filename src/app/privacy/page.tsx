@@ -17,94 +17,239 @@ export default function PrivacyPolicyPage() {
           Privacy Policy
         </h1>
         <p className="text-sm text-surface-400 mb-10">
-          Last updated: April 1, 2026
+          Last updated: June 4, 2026
         </p>
 
         <div className="space-y-8 text-surface-700 leading-relaxed">
           <section>
             <h2 className="text-lg font-semibold text-surface-900 mb-3">
-              1. Information We Collect
+              1. Overview
             </h2>
             <p>
-              When you use ReplyPilot, we collect the information you provide
-              during account creation (name, email, business name) and the
-              responses you submit through the AI readiness assessment. We also
-              collect basic usage data such as pages visited and time spent on
-              each section.
+              ReplyPilot is an AI-powered email reply tool built for gym owners.
+              It connects to your Gmail account, uses Google Gemini to generate
+              AI-drafted replies, and includes a contacts CRM to help you manage
+              leads and members. This Privacy Policy explains what data we
+              collect, how we use it, and how we protect it.
             </p>
           </section>
 
           <section>
             <h2 className="text-lg font-semibold text-surface-900 mb-3">
-              2. How We Use Your Information
+              2. Information We Collect
             </h2>
-            <p>We use your information to:</p>
             <ul className="list-disc pl-6 mt-2 space-y-1.5">
-              <li>Generate your personalized AI readiness report</li>
-              <li>Improve our assessment and recommendation engine</li>
-              <li>Communicate with you about your account and our service</li>
-              <li>Analyze aggregate trends to improve ReplyPilot</li>
+              <li>
+                <strong>Account information</strong> — your email address and
+                password (stored securely via Supabase Auth).
+              </li>
+              <li>
+                <strong>Billing information</strong> — your Stripe customer ID
+                and subscription status. We never store raw card details; all
+                payment data is handled directly by Stripe.
+              </li>
+              <li>
+                <strong>Gmail data</strong> — email content and metadata
+                fetched through the Gmail API to display your inbox and generate
+                AI-drafted replies. See Section 4 for full details.
+              </li>
+              <li>
+                <strong>Usage and logs</strong> — basic activity logs (e.g.
+                when replies are generated or sent) used to operate and improve
+                the service.
+              </li>
             </ul>
           </section>
 
           <section>
             <h2 className="text-lg font-semibold text-surface-900 mb-3">
-              3. Data Storage &amp; Security
+              3. How We Use Your Information
             </h2>
-            <p>
-              Your assessment data is currently stored locally in your browser.
-              We do not transmit your assessment responses to external servers.
-              Account information is protected using industry-standard security
-              measures.
+            <p>We use the information we collect to:</p>
+            <ul className="list-disc pl-6 mt-2 space-y-1.5">
+              <li>Operate and deliver the ReplyPilot service.</li>
+              <li>
+                Generate AI-drafted replies by passing email content to Google
+                Gemini.
+              </li>
+              <li>
+                Process payments and manage your subscription through Stripe.
+              </li>
+              <li>
+                Send transactional emails (e.g. account confirmations, billing
+                receipts).
+              </li>
+              <li>Diagnose issues and improve the service over time.</li>
+            </ul>
+            <p className="mt-3">
+              We do not sell your data to third parties or use it for
+              advertising purposes.
             </p>
           </section>
 
           <section>
             <h2 className="text-lg font-semibold text-surface-900 mb-3">
-              4. Sharing Your Information
+              4. Gmail Data and Google API Services
             </h2>
             <p>
-              We do not sell, rent, or share your personal information with third
-              parties for marketing purposes. We may share anonymized, aggregate
-              data for research or product improvement.
+              ReplyPilot connects to your Gmail account via Google OAuth and
+              requests the following scopes:
             </p>
-          </section>
-
-          <section>
-            <h2 className="text-lg font-semibold text-surface-900 mb-3">
-              5. Your Rights
-            </h2>
-            <p>
-              You can delete your account and all associated data at any time
-              from the Settings page. You may also contact us to request a copy
-              of your data or ask any privacy-related questions.
+            <ul className="list-disc pl-6 mt-2 space-y-1.5">
+              <li>
+                <strong>gmail.readonly</strong> — to read your emails so
+                ReplyPilot can display them and generate AI-drafted replies.
+              </li>
+              <li>
+                <strong>gmail.modify</strong> — to create and save draft replies
+                to your Gmail Drafts folder on your behalf.
+              </li>
+            </ul>
+            <p className="mt-3">
+              Email content is processed temporarily to generate AI replies and
+              is not stored long-term. We do not sell, share, or use your email
+              data for advertising purposes.
             </p>
-          </section>
-
-          <section>
-            <h2 className="text-lg font-semibold text-surface-900 mb-3">
-              6. Changes to This Policy
-            </h2>
-            <p>
-              We may update this Privacy Policy from time to time. We will
-              notify you of significant changes by posting a notice on our
-              website. Continued use of ReplyPilot after changes constitutes
-              acceptance of the updated policy.
-            </p>
-          </section>
-
-          <section>
-            <h2 className="text-lg font-semibold text-surface-900 mb-3">
-              7. Contact
-            </h2>
-            <p>
-              If you have questions about this Privacy Policy, please contact us
-              at{" "}
+            <p className="mt-3">
+              ReplyPilot&apos;s use of information received from Google APIs
+              complies with the{" "}
               <a
-                href="mailto:privacy@replypilot.ai"
+                href="https://developers.google.com/terms/api-services-user-data-policy"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-brand-600 hover:text-brand-700 underline underline-offset-2"
               >
-                privacy@replypilot.ai
+                Google API Services User Data Policy
+              </a>
+              , including the Limited Use requirements.
+            </p>
+            <p className="mt-3">
+              You may revoke Gmail access at any time through{" "}
+              <a
+                href="https://myaccount.google.com/permissions"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-brand-600 hover:text-brand-700 underline underline-offset-2"
+              >
+                your Google account permissions
+              </a>
+              . Revoking access immediately disables ReplyPilot&apos;s
+              connection to your inbox.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-surface-900 mb-3">
+              5. Data Retention
+            </h2>
+            <p>
+              We retain your account and billing data for as long as your
+              account is active. If you delete your account, your personal data
+              is removed within 30 days. Email content fetched from Gmail is not
+              stored beyond the duration of the request that requires it.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-surface-900 mb-3">
+              6. Data Sharing
+            </h2>
+            <p>
+              We do not sell your personal data. We share data only with the
+              following third-party services that are necessary to operate
+              ReplyPilot:
+            </p>
+            <ul className="list-disc pl-6 mt-2 space-y-1.5">
+              <li>
+                <strong>Supabase</strong> — database and authentication.
+              </li>
+              <li>
+                <strong>Stripe</strong> — payment processing and subscription
+                management.
+              </li>
+              <li>
+                <strong>Google Gemini</strong> — AI reply generation. Email
+                content is passed to Gemini solely to produce draft replies.
+              </li>
+              <li>
+                <strong>Vercel</strong> — application hosting and
+                infrastructure.
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-surface-900 mb-3">
+              7. Security
+            </h2>
+            <p>
+              All data is transmitted over HTTPS. Your database is protected by
+              row-level security policies so that each user can only access their
+              own data. Credentials and API keys are stored as restricted
+              environment variables and are never exposed to the client. While we
+              take reasonable precautions, no system is completely secure and we
+              cannot guarantee absolute security.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-surface-900 mb-3">
+              8. Your Rights
+            </h2>
+            <p>You have the right to:</p>
+            <ul className="list-disc pl-6 mt-2 space-y-1.5">
+              <li>Access the personal data we hold about you.</li>
+              <li>Request correction of inaccurate data.</li>
+              <li>Request deletion of your account and associated data.</li>
+              <li>
+                Revoke Gmail access at any time via{" "}
+                <a
+                  href="https://myaccount.google.com/permissions"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-600 hover:text-brand-700 underline underline-offset-2"
+                >
+                  your Google account permissions
+                </a>
+                .
+              </li>
+            </ul>
+            <p className="mt-3">
+              To exercise any of these rights, contact us at{" "}
+              <a
+                href="mailto:martinlam16061@gmail.com"
+                className="text-brand-600 hover:text-brand-700 underline underline-offset-2"
+              >
+                martinlam16061@gmail.com
+              </a>
+              .
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-surface-900 mb-3">
+              9. Changes to This Policy
+            </h2>
+            <p>
+              We may update this Privacy Policy from time to time. When we make
+              material changes, we will update the &quot;Last updated&quot; date
+              at the top of this page. Your continued use of ReplyPilot after
+              changes are posted constitutes your acceptance of the revised
+              policy.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-surface-900 mb-3">
+              10. Contact
+            </h2>
+            <p>
+              Questions about this Privacy Policy? Contact us at{" "}
+              <a
+                href="mailto:martinlam16061@gmail.com"
+                className="text-brand-600 hover:text-brand-700 underline underline-offset-2"
+              >
+                martinlam16061@gmail.com
               </a>
               .
             </p>
