@@ -37,6 +37,14 @@ export async function POST(request: Request) {
 
   const limit = await enforceDailyLimit(supabase, "generate");
   if (!limit.allowed) {
+    console.warn("[generate] daily limit exceeded", { userId: user.id, count: limit.newCount, limit: limit.limit });
+    await supabase.from("activity_logs").insert({
+      user_id: user.id,
+      entity_type: "usage",
+      action: "limit_exceeded",
+      entity_id: null,
+      metadata: { kind: "generate", count: limit.newCount, limit: limit.limit },
+    });
     return NextResponse.json(
       { generation: null, subject: "", body: "", error: limit.message },
       { status: 429 }

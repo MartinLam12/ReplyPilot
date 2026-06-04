@@ -723,7 +723,9 @@ Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes`/`subs
 | 14 | **Subscription / billing (paywall)** | `/subscribe`, Stripe Checkout/webhook | [subscribe/page.tsx](src/app/subscribe/page.tsx), [stripe/checkout](src/app/api/stripe/checkout/route.ts), [stripe/webhook](src/app/api/stripe/webhook/route.ts), [middleware.ts](middleware.ts), [subscription.ts](src/lib/subscription.ts) | `profiles` | Stripe | — |
 | 15 | **Gmail token encryption** | inside connect/sync/send | [token-crypto.ts](src/lib/token-crypto.ts) | `gym_settings` | Node `crypto` | — |
 
-**Defined-but-unused (data model only):** templates, scheduled_follow_ups, activity_logs. **[High]**
+**Defined-but-unused (data model only):** templates, scheduled_follow_ups. **[High]**
+
+**`activity_logs`** — now wired. Records four events: `subscription.activated`, `subscription.cancelled` (webhook — service-role client, explicit `user_id`); `ai.generate.limit_exceeded`, `email.sent` (anon client under RLS). Schema: `user_id`, `entity_type`, `entity_id` (uuid, nullable), `action`, `metadata` (jsonb), `created_at`.
 
 ---
 
@@ -977,7 +979,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 6d. **Two sources of truth for subscription status.** Middleware queries `profiles.subscription_status` inline; [subscription.ts](src/lib/subscription.ts) `requirePaidUser` is a separate reader (used by the billed API routes) that the middleware doesn't share. They can drift in interpretation (e.g. handling of `past_due`). The webhook also collapses all Stripe statuses to just `active`/`inactive` ([webhook:105](src/app/api/stripe/webhook/route.ts#L105)), discarding `past_due`/`trialing`/`canceled` nuance. **[Medium]**
 
 ### Low Risk
-7. **Unused data model:** `templates` (seeded but unread), `scheduled_follow_ups`, `activity_logs`. **[High]**
+7. **Unused data model:** `templates` (seeded but unread), `scheduled_follow_ups`. **[High]** (`activity_logs` is no longer unused — see §13.)
 8. **Repo artifacts** (`ruvector.db`, `tsconfig.tsbuildinfo`, `.venv/`) present in tree. **[Medium]** (verify `.gitignore`).
 9. **Split send responsibility** — the `send` route now sends, persists the outbound message, and marks the thread replied; `approveGeneration` separately marks the generation sent + triggers learning. Two writers touch the same thread/generation lifecycle. Minor coupling. **[Medium]**
 10. **Non-functional contact form.** [contact/page.tsx](src/app/contact/page.tsx) renders inputs but its `onSubmit` only `preventDefault()`s — it sends nothing. Real contact is via the mailto links. **[Low]**

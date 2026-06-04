@@ -68,7 +68,6 @@ export async function POST(request: NextRequest) {
         const uid = session.metadata?.supabase_uid;
 
         if (uid) {
-          console.log("[webhook] checkout.session.completed: updating by uid from session metadata", { uid, customerId, subscriptionId });
           const { error, count } = await supabase
             .from("profiles")
             .update({
@@ -80,16 +79,23 @@ export async function POST(request: NextRequest) {
             }, { count: "exact" })
             .eq("id", uid);
           if (error || !count) {
-            console.error("[webhook] checkout.session.completed update failed — user not activated", { uid, error, count });
+            console.error("[webhook] checkout.session.completed: update failed — user not activated", { error: error?.message });
           } else {
-            console.log("[webhook] checkout.session.completed: activated uid", uid);
+            console.log("[webhook] checkout.session.completed: activated via metadata uid");
+            await supabase.from("activity_logs").insert({
+              user_id: uid,
+              entity_type: "subscription",
+              action: "activated",
+              entity_id: null,
+              metadata: { subscription_id: subscriptionId },
+            });
           }
           break;
         }
 
         // Fallback: try existing stripe_customer_id on profiles.
-        console.warn("[webhook] no supabase_uid in session metadata, falling back to stripe_customer_id lookup", { customerId });
-        const { error, count } = await supabase
+        console.warn("[webhook] checkout.session.completed: no uid in metadata, falling back to customer lookup");
+        const { data: updatedProfiles, error, count } = await supabase
           .from("profiles")
           .update({
             stripe_customer_id: customerId,
@@ -98,12 +104,23 @@ export async function POST(request: NextRequest) {
             current_period_end: periodEnd,
             updated_at: new Date().toISOString(),
           }, { count: "exact" })
-          .eq("stripe_customer_id", customerId);
+          .eq("stripe_customer_id", customerId)
+          .select("id");
 
         if (error || !count) {
-          console.error("[webhook] fallback lookup also failed — user not activated", { customerId, error });
+          console.error("[webhook] checkout.session.completed: fallback lookup failed — user not activated", { error: error?.message });
         } else {
-          console.log("[webhook] checkout.session.completed: activated via fallback", customerId);
+          console.log("[webhook] checkout.session.completed: activated via fallback");
+          const resolvedUid = updatedProfiles?.[0]?.id;
+          if (resolvedUid) {
+            await supabase.from("activity_logs").insert({
+              user_id: resolvedUid,
+              entity_type: "subscription",
+              action: "activated",
+              entity_id: null,
+              metadata: { subscription_id: subscriptionId },
+            });
+          }
         }
         break;
       }
@@ -120,26 +137,37 @@ export async function POST(request: NextRequest) {
           })
           .eq("subscription_id", subscription.id);
         if (error) {
-          console.error("[webhook] customer.subscription.updated failed:", error);
+          console.error("[webhook] customer.subscription.updated: DB update failed", { error: error.message });
         } else {
-          console.log("[webhook] customer.subscription.updated:", subscription.id, subscription.status);
+          console.log("[webhook] customer.subscription.updated: status →", subscription.status);
         }
         break;
       }
 
       case "customer.subscription.deleted": {
         const subscription = event.data.object as Stripe.Subscription;
-        const { error } = await supabase
+        const { data: cancelledProfiles, error } = await supabase
           .from("profiles")
           .update({
             subscription_status: "inactive",
             updated_at: new Date().toISOString(),
           })
-          .eq("subscription_id", subscription.id);
+          .eq("subscription_id", subscription.id)
+          .select("id");
         if (error) {
-          console.error("[webhook] customer.subscription.deleted failed:", error);
+          console.error("[webhook] customer.subscription.deleted: DB update failed", { error: error.message });
         } else {
-          console.log("[webhook] customer.subscription.deleted:", subscription.id);
+          console.log("[webhook] customer.subscription.deleted: deactivated");
+          const resolvedUid = cancelledProfiles?.[0]?.id;
+          if (resolvedUid) {
+            await supabase.from("activity_logs").insert({
+              user_id: resolvedUid,
+              entity_type: "subscription",
+              action: "cancelled",
+              entity_id: null,
+              metadata: { subscription_id: subscription.id },
+            });
+          }
         }
         break;
       }

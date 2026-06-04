@@ -20,6 +20,7 @@ export async function POST(request: Request) {
     /[\r\n]/.test(to) ||
     /[\r\n]/.test(subject)
   ) {
+    console.warn("[gmail/send] CRLF injection attempt rejected", { userId: user.id });
     return NextResponse.json({ error: "Invalid header value" }, { status: 400 });
   }
 
@@ -96,6 +97,14 @@ export async function POST(request: Request) {
       .update({ status: "replied", last_message_at: sentAt })
       .eq("id", threadId)
       .eq("user_id", user.id);
+
+    await supabase.from("activity_logs").insert({
+      user_id: user.id,
+      entity_type: "email",
+      action: "sent",
+      entity_id: null,
+      metadata: null,
+    });
 
     return NextResponse.json({ success: true });
   } catch (err) {

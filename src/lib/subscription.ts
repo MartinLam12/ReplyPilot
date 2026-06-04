@@ -14,6 +14,7 @@ export async function requirePaidUser(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
+    console.warn("[auth] unauthenticated request rejected");
     return { ok: false, res: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
 
@@ -24,6 +25,7 @@ export async function requirePaidUser(
     .single();
 
   if (profile?.subscription_status !== "active") {
+    console.warn("[auth] subscription gate rejected", { userId: user.id });
     return { ok: false, res: NextResponse.json({ error: "Subscription required" }, { status: 402 }) };
   }
 
