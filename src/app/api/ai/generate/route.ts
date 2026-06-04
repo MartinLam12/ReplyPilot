@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@/lib/supabase/server";
+import { requirePaidUser } from "@/lib/subscription";
 import { retrieveStyleContext, buildStylePromptSection } from "@/lib/style-memory";
 import { enforceDailyLimit } from "@/lib/usage-limits";
 import type { EmailMessage } from "@/lib/types";
@@ -30,8 +31,9 @@ function stripFences(text: string): string {
 
 export async function POST(request: Request) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requirePaidUser(supabase);
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
 
   const limit = await enforceDailyLimit(supabase, "generate");
   if (!limit.allowed) {

@@ -4,7 +4,7 @@
 > **Scope:** Documents the system *as it currently exists*. No improvements are suggested.
 > **Method:** Every non-obvious claim cites the file(s) it came from. Confidence is labelled **[High]**, **[Medium]**, or **[Low]**. Where something cannot be determined from the code, it says so explicitly.
 > **Generated from:** a full read of `src/`, `supabase/`, root config, and the build manifest.
-> **Last revised:** 2026-06-02, after the "fix reply thread and text settings" change set — reflects the inbox component split, incremental Gmail sync, feedback-weighted style retrieval, style-example management, removal of the duplicate middleware, and pruning of unused deps/components.
+> **Last revised:** 2026-06-04, after the **Stripe subscription / billing** change set. This revision adds the payments subsystem (Stripe Checkout + webhook), **subscription gating in middleware**, the new `profiles` table and its auto-create trigger, **AES-256-GCM encryption of Gmail refresh tokens at rest** (`token-crypto.ts`), **Cloudflare Turnstile** captcha on login/signup, and the **first use of the Supabase service-role key** (in the Stripe webhook). The earlier 2026-06-02 baseline (inbox component split, incremental Gmail sync, feedback-weighted style retrieval, style-example management, single middleware, dep pruning) is retained and still accurate.
 
 ---
 
@@ -39,7 +39,7 @@
 
 **The core problem it solves.** A gym owner spends a lot of time answering repetitive lead and member emails. ReplyPilot reduces each reply to: read the thread → click "Suggest a Reply" → lightly edit → send. The reply already obeys the gym's rules and matches the owner's tone, so it needs minimal editing.
 
-**Who the users are.** Gym owners/coaches. The README states it was "Built for a gym with 2 locations" ([README.md:7](README.md#L7)), and the usage-limit defaults are explicitly "sized for a single trusted client" ([src/lib/usage-limits.ts:12-18](src/lib/usage-limits.ts#L12-L18)). **[High]** This is effectively a single-tenant / small-tenant product today, even though the auth and data model are per-user and could support more.
+**Who the users are.** Gym owners/coaches. The README states it was "Built for a gym with 2 locations" ([README.md:7](README.md#L7)), and the usage-limit defaults are explicitly "sized for a single trusted client" ([src/lib/usage-limits.ts:12-18](src/lib/usage-limits.ts#L12-L18)). **[High]** The data model and auth are per-user, and the product now has the scaffolding of a **paid multi-tenant SaaS**: open self-serve signup (with a Cloudflare Turnstile captcha), a **Stripe subscription paywall** that gates every app page, and a per-user `profiles` table tracking subscription state. So while the *operational* footprint may still be small, the code is no longer single-tenant-by-construction — anyone can sign up, but **no one reaches the app without an active subscription** ([middleware.ts:96-114](middleware.ts#L96-L114)). **[High]**
 
 **Major features.**
 1. **Gmail sync** — pull last-14-day Primary-category inbox threads ([src/app/api/gmail/sync/route.ts](src/app/api/gmail/sync/route.ts)).
@@ -48,10 +48,11 @@
 4. **Send replies** — via Gmail API in the original thread ([src/app/api/gmail/send/route.ts](src/app/api/gmail/send/route.ts)).
 5. **Contacts CRM** — auto-created from senders; lead/trial/member/inactive ([src/app/contacts/page.tsx](src/app/contacts/page.tsx)).
 6. **Settings** — gym rules, Gmail connection, manual style examples ([src/app/settings/page.tsx](src/app/settings/page.tsx)).
-7. **Auth** — email/password via Supabase ([src/app/login/page.tsx](src/app/login/page.tsx), [src/app/signup/page.tsx](src/app/signup/page.tsx)).
+7. **Auth** — email/password via Supabase, protected by a Cloudflare Turnstile captcha ([src/app/login/page.tsx](src/app/login/page.tsx), [src/app/signup/page.tsx](src/app/signup/page.tsx)).
 8. **Daily usage caps** — soft per-user limits on billed AI endpoints ([src/lib/usage-limits.ts](src/lib/usage-limits.ts)).
+9. **Subscription billing / paywall** — Stripe Checkout subscription, a webhook that records status into `profiles`, and a middleware gate that redirects un-subscribed users to `/subscribe` ([src/app/api/stripe/](src/app/api/stripe/), [middleware.ts](middleware.ts), [src/app/subscribe/page.tsx](src/app/subscribe/page.tsx)).
 
-**Overall architecture style.** A **single Next.js 16 App Router application** that is its own frontend *and* backend. The "backend" is split between **Server Actions** (first-party CRUD) and **Route Handlers** (external integrations + HTTP endpoints). **Supabase Postgres** is the database, with **Row-Level Security (RLS) as the authorization boundary**. **Google Gemini** (generation + embeddings) and the **Gmail API** are the external services. Deployed on **Vercel**. It is a feature-based, layered monolith — there is no separate API server or microservices. **[High]**
+**Overall architecture style.** A **single Next.js 16 App Router application** that is its own frontend *and* backend. The "backend" is split between **Server Actions** (first-party CRUD) and **Route Handlers** (external integrations + HTTP endpoints). **Supabase Postgres** is the database, with **Row-Level Security (RLS) as the authorization boundary** — with one deliberate exception: the Stripe webhook uses the **service-role key** (which bypasses RLS) to write subscription state, because it runs with no user session. **Google Gemini** (generation + embeddings), the **Gmail API**, **Stripe** (billing), and **Cloudflare Turnstile** (captcha) are the external services. Deployed on **Vercel**. It is a feature-based, layered monolith — there is no separate API server or microservices. **[High]**
 
 **Day-one mental model for a new engineer:** "A Next.js app where pages are thin clients that call Server Actions for CRUD and `fetch()` API routes for AI/Gmail. Security is enforced in the database (RLS), not in app code. The clever part is `style-memory.ts`."
 
@@ -70,8 +71,9 @@ Source for all versions: [package.json](package.json).
 | **Tailwind CSS 4** | Utility-first styling | All components; tokens in [tailwind.config.ts](tailwind.config.ts), [src/app/globals.css](src/app/globals.css) | Styling via class names; custom `brand`/`surface`/`success` color scales |
 | **lucide-react** | Icon set | Navbar, pages, buttons | SVG icons |
 | **clsx** (via `cn()`) | Conditional class merging | [src/lib/utils.ts](src/lib/utils.ts#L3) | Compose Tailwind class strings |
+| **@marsidev/react-turnstile** | Cloudflare Turnstile widget | [login](src/app/login/page.tsx#L8), [signup](src/app/signup/page.tsx#L8) | Renders the captcha; token passed to Supabase `signUp`/`signInWithPassword` as `captchaToken` |
 
-> The runtime dependency list is now lean (9 packages — see [package.json](package.json)): `@google/generative-ai`, `@supabase/ssr`, `@supabase/supabase-js`, `clsx`, `googleapis`, `lucide-react`, `next`, `react`, `react-dom`. Earlier leftovers `framer-motion` and `recharts` were **removed** (commit `99a72c7`); no unused runtime deps remain. **[High]**
+> The runtime dependency list is 11 packages (see [package.json](package.json)): `@google/generative-ai`, `@marsidev/react-turnstile`, `@supabase/ssr`, `@supabase/supabase-js`, `clsx`, `googleapis`, `lucide-react`, `next`, `react`, `react-dom`, `stripe`. The earlier leftovers `framer-motion`/`recharts` were removed (commit `99a72c7`); `stripe` and `@marsidev/react-turnstile` were **added** in the billing/captcha work. Token encryption uses Node's built-in `crypto` (no dependency). **[High]**
 
 ### Backend (within Next.js)
 | Tech | Why | Where | Responsibility |
@@ -91,7 +93,8 @@ Source for all versions: [package.json](package.json).
 | Tech | Why | Where | Responsibility |
 |---|---|---|---|
 | **Supabase Auth** | Email/password identity | [src/lib/supabase/](src/lib/supabase/), middleware, login/signup pages | User identity, cookie sessions, `auth.uid()` for RLS |
-| **Google OAuth 2.0** (separate) | Gmail access | [src/app/api/gmail/auth/route.ts](src/app/api/gmail/auth/route.ts), [callback](src/app/api/gmail/callback/route.ts) | Obtain Gmail refresh token (read/send/modify scopes) |
+| **Cloudflare Turnstile** | Bot/abuse protection on auth | [login](src/app/login/page.tsx), [signup](src/app/signup/page.tsx) | Client widget yields a token; **verification happens inside Supabase Auth** (configured server-side in the Supabase project), not in app code |
+| **Google OAuth 2.0** (separate) | Gmail access | [src/app/api/gmail/auth/route.ts](src/app/api/gmail/auth/route.ts), [callback](src/app/api/gmail/callback/route.ts) | Obtain Gmail refresh token (read/send/modify scopes); token **encrypted at rest** via [token-crypto.ts](src/lib/token-crypto.ts) |
 
 ### State management
 | Tech | Why | Where | Responsibility |
@@ -108,6 +111,8 @@ Source for all versions: [package.json](package.json).
 ### Third-party services
 - **Google Gemini** — `gemini-2.5-flash-lite` (generation) and `gemini-embedding-001` (embeddings). [src/app/api/ai/generate/route.ts:103](src/app/api/ai/generate/route.ts#L103), [src/lib/style-memory.ts:171](src/lib/style-memory.ts#L171).
 - **Gmail API** (`googleapis`) — read threads, send messages.
+- **Stripe** (`stripe`) — subscription Checkout sessions ([api/stripe/checkout](src/app/api/stripe/checkout/route.ts)) and event webhook ([api/stripe/webhook](src/app/api/stripe/webhook/route.ts)). Uses the default API version pinned by the installed `stripe@^22` SDK (no explicit `apiVersion` passed).
+- **Cloudflare Turnstile** — captcha on login/signup, verified by Supabase Auth.
 
 ### Build tools
 - **Next.js build** (`next build`/`next dev`) — uses **Turbopack** in dev (visible in build chunk names in [.next/dev/server/middleware-manifest.json](.next/dev/server/middleware-manifest.json)). **[High]**
@@ -129,7 +134,8 @@ ReplyPilot/
 ├── src/
 │   ├── app/                  ← App Router: pages + API + actions
 │   │   ├── actions/          ← Server Actions (first-party CRUD)
-│   │   ├── api/              ← Route Handlers (external + HTTP)
+│   │   ├── api/              ← Route Handlers (external + HTTP): gmail/, ai/, style/, stripe/
+│   │   ├── subscribe/        ← Paywall page (Stripe Checkout launch)
 │   │   ├── auth/callback/    ← Supabase code-exchange handler
 │   │   ├── inbox/            ← page.tsx (orchestrator) + components/ + utils.ts
 │   │   │   └── components/   ← ThreadView, MessageBubble, EmailHtmlFrame, ReplyPanel, StyleFeedback
@@ -144,6 +150,8 @@ ReplyPilot/
 │       ├── supabase/         ← Supabase client factories
 │       ├── style-memory.ts   ← Style-learning engine (the core IP)
 │       ├── usage-limits.ts   ← Daily caps
+│       ├── subscription.ts   ← Read a user's subscription status from profiles
+│       ├── token-crypto.ts   ← AES-256-GCM encrypt/decrypt of Gmail refresh tokens
 │       ├── user-context.tsx  ← Auth context
 │       ├── types.ts          ← Shared types
 │       └── utils.ts          ← cn(), formatDate()
@@ -171,8 +179,8 @@ ReplyPilot/
 
 ### `src/app/api/` — Route Handlers
 - **Purpose:** Endpoints needing HTTP semantics or external SDKs.
-- **Subfolders:** `gmail/` (auth, callback, sync, send), `ai/generate`, `style/` (add-sample, backfill, feedback, status, **samples** — list/delete examples), and `style/__tests__/`.
-- **Interactions:** Called via `fetch()` from pages; call Gemini/Gmail/Supabase and `lib/`.
+- **Subfolders:** `gmail/` (auth, callback, sync, send), `ai/generate`, `style/` (add-sample, backfill, feedback, status, **samples** — list/delete examples) + `style/__tests__/`, and **`stripe/`** (`checkout` — creates a Checkout session; `webhook` — applies Stripe events to `profiles` using the service-role client).
+- **Interactions:** Called via `fetch()` from pages (or by Stripe, for the webhook); call Gemini/Gmail/Stripe/Supabase and `lib/`.
 
 ### `src/app/auth/callback/`
 - **Purpose:** Supabase OAuth/email-confirm code exchange ([route.ts](src/app/auth/callback/route.ts)). Distinct from Gmail callback.
@@ -189,8 +197,8 @@ ReplyPilot/
 - **Dependencies:** `user-context` (for `useUser`/`signOut`), `ui/Button`.
 
 ### `src/lib/` — domain + infra
-- **Purpose:** Non-UI logic. **Files:** [style-memory.ts](src/lib/style-memory.ts) (core), [usage-limits.ts](src/lib/usage-limits.ts), [user-context.tsx](src/lib/user-context.tsx), [types.ts](src/lib/types.ts), [utils.ts](src/lib/utils.ts), and [supabase/](src/lib/supabase/).
-- **`lib/supabase/`:** [client.ts](src/lib/supabase/client.ts) (browser singleton), [server.ts](src/lib/supabase/server.ts) (per-request, cookie-bound).
+- **Purpose:** Non-UI logic. **Files:** [style-memory.ts](src/lib/style-memory.ts) (core), [usage-limits.ts](src/lib/usage-limits.ts), [subscription.ts](src/lib/subscription.ts) (reads `profiles.subscription_status`), [token-crypto.ts](src/lib/token-crypto.ts) (AES-256-GCM for Gmail tokens), [user-context.tsx](src/lib/user-context.tsx), [types.ts](src/lib/types.ts), [utils.ts](src/lib/utils.ts), and [supabase/](src/lib/supabase/).
+- **`lib/supabase/`:** [client.ts](src/lib/supabase/client.ts) (browser singleton), [server.ts](src/lib/supabase/server.ts) (per-request, cookie-bound). Note: the Stripe webhook constructs its **own** service-role client directly (not via these factories) so it can bypass RLS without a session ([api/stripe/webhook/route.ts:7-11](src/app/api/stripe/webhook/route.ts#L7-L11)).
 
 ### `supabase/` — database definition
 - **Purpose:** Source of truth for schema, RLS policies, and RPCs (not auto-applied; run manually per [README.md:73-79](README.md#L73-L79)). **Files:** [schema.sql](supabase/schema.sql) (core tables + seed templates), [style-memory-schema.sql](supabase/style-memory-schema.sql) (pgvector tables + RPCs), [usage-limits-schema.sql](supabase/usage-limits-schema.sql) (counters + `increment_usage`).
@@ -213,11 +221,13 @@ Feature-based, layered **Next.js monolith**. Layers:
 3. **Service/Action** — Server Actions ([src/app/actions/](src/app/actions/)) and the domain library ([src/lib/](src/lib/)).
 4. **API** — Route Handlers ([src/app/api/](src/app/api/)).
 5. **Data** — Supabase Postgres (RLS) + RPCs.
-6. **External** — Gemini, Gmail.
-7. **Cross-cutting** — Middleware (auth + CSP), `next.config.ts` headers.
+6. **External** — Gemini, Gmail, Stripe, Cloudflare Turnstile.
+7. **Cross-cutting** — Middleware (auth + **subscription gate** + CSP), `next.config.ts` headers.
 
 ### Separation of concerns
 - **Authorization lives in the database** (RLS), not in app code. [AGENTS.md](AGENTS.md) explicitly forbids redundant `.eq("user_id", …)` filters because RLS already scopes the anon-key client. **[High]** (In practice many call sites still add them — see §18.)
+- **One sanctioned RLS bypass: the Stripe webhook.** It has no user session (Stripe calls it server-to-server), so it uses the **service-role key** to write `profiles`. This is the single place RLS is bypassed, and per [AGENTS.md](AGENTS.md) it is exactly the kind of code that "needs review." Its safety rests on Stripe **signature verification** ([webhook:29-37](src/app/api/stripe/webhook/route.ts#L29-L37)) and on only ever writing the `profiles` row matched by `supabase_uid`/`stripe_customer_id`/`subscription_id`.
+- **Access control has two layers now:** RLS (data ownership) *and* a **subscription gate** in middleware (un-subscribed authenticated users are bounced from app pages to `/subscribe`).
 - **Output validation lives at the sink**, not in middleware — e.g. CRLF header-injection checks happen inside the Gmail send route ([src/app/api/gmail/send/route.ts:14-16](src/app/api/gmail/send/route.ts#L14-L16)), per [AGENTS.md](AGENTS.md).
 - **Untrusted email HTML containment lives in an iframe sandbox** ([src/app/inbox/components/EmailHtmlFrame.tsx](src/app/inbox/components/EmailHtmlFrame.tsx)); the regex sanitizer is defence-in-depth only.
 
@@ -289,9 +299,22 @@ This traces a fresh page load (e.g. a logged-out user visiting `/inbox`). **[Hig
    - Sets `x-nonce` + `Content-Security-Policy` on the request headers so Next can apply the nonce to its own scripts ([middleware.ts:29-31](middleware.ts#L29-L31)).
    - Creates a server Supabase client bound to request cookies and calls `auth.getUser()` ([middleware.ts:42-61](middleware.ts#L42-L61)).
 
-2. **Route guard.** `protectedRoutes = ["/dashboard", "/inbox", "/contacts", "/settings"]` and `authRoutes = ["/login", "/signup"]` ([middleware.ts:4-5](middleware.ts#L4-L5)). If no user and path is protected → redirect to `/login?redirect=…`. If logged-in and on an auth route → redirect to `/dashboard`. The list now matches the actual app pages (the previous stale `/assessment`/`/reports` entries and the missing `/inbox`/`/contacts` were corrected in commit `6c27e79`).
+2. **Route guard (now three checks).** `protectedRoutes = ["/dashboard", "/inbox", "/contacts", "/settings"]`, `authRoutes = ["/login", "/signup"]`, and `subscriptionExemptRoutes = ["/subscribe"]` ([middleware.ts:4-7](middleware.ts#L4-L7)). Order of decisions:
+   - **Webhook bypass first:** `POST /api/stripe/webhook` returns immediately with no auth logic, because Stripe sends no session cookie ([middleware.ts:65-70](middleware.ts#L65-L70)).
+   - **Not logged in** + on a protected *or* `/subscribe` route → redirect to `/login?redirect=…` ([middleware.ts:83-94](middleware.ts#L83-L94)).
+   - **Logged in + protected route → subscription gate:** middleware reads `profiles.subscription_status` for the user; if it is not `"active"`, redirect to `/subscribe` ([middleware.ts:96-114](middleware.ts#L96-L114)). This is an **extra DB round-trip on every protected request**.
+   - **Logged in + on an auth route** → redirect to `/dashboard`.
+   - The protected list matches the actual app pages (the previous stale `/assessment`/`/reports` entries and the missing `/inbox`/`/contacts` were corrected in commit `6c27e79`).
 
-3. **Configuration loading.** Env vars are read at request time inside middleware, the Supabase factories ([src/lib/supabase/server.ts:5-12](src/lib/supabase/server.ts#L5-L12), [client.ts:7-15](src/lib/supabase/client.ts#L7-L15)), and the integration routes (Google creds checked in [sync/route.ts:139-148](src/app/api/gmail/sync/route.ts#L139-L148)). There is no central config module. **[High]** Required vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `GEMINI_API_KEY` ([README.md:64-68](README.md#L64-L68)), plus `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI` and optionally `NEXT_PUBLIC_APP_URL` (used in [gmail/auth/route.ts:10](src/app/api/gmail/auth/route.ts#L10)).
+3. **Configuration loading.** Env vars are read at request time inside middleware, the Supabase factories ([src/lib/supabase/server.ts:5-12](src/lib/supabase/server.ts#L5-L12), [client.ts:7-15](src/lib/supabase/client.ts#L7-L15)), and the integration routes. There is no central config module. **[High]** The full set of env vars referenced in code (`grep process.env`):
+   - **Supabase:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (webhook only).
+   - **Gemini:** `GEMINI_API_KEY`.
+   - **Google/Gmail OAuth:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`.
+   - **Stripe:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PRICE_ID`.
+   - **Token encryption:** `GMAIL_TOKEN_ENCRYPTION_KEY` (32-byte hex; required by [token-crypto.ts](src/lib/token-crypto.ts#L8-L23) whenever a Gmail token is read/written).
+   - **Captcha:** `NEXT_PUBLIC_TURNSTILE_SITE_KEY`.
+   - **App URL:** `NEXT_PUBLIC_APP_URL` (Checkout success/cancel URLs + Gmail auth; falls back to `http://localhost:3000`).
+   - `NODE_ENV` (dev-only CSP `'unsafe-eval'`, secure-cookie toggle).
 
 4. **Root layout renders.** [src/app/layout.tsx](src/app/layout.tsx) is an async server component. It calls `await connection()` ([layout.tsx:17](src/app/layout.tsx#L17)) — a Next.js API that opts the render into dynamic/request-time rendering. **[Medium]** (purpose: ensure per-request behaviour, likely so the nonce/session are fresh). It injects Google Fonts and renders `<ClientLayout>`.
 
@@ -313,19 +336,21 @@ This traces a fresh page load (e.g. a logged-out user visiting `/inbox`). **[Hig
 Format: **User Action → UI Component → Handler → State → API/Action → Backend → DB → Response → UI**.
 
 ### Journey A — Sign up
-- **Action:** fill form, submit. **Component:** [signup/page.tsx](src/app/signup/page.tsx).
-- **Handler:** `handleSubmit` → `createClient().auth.signUp({ email, password, options:{ data:{ name } } })` ([signup/page.tsx:17-35](src/app/signup/page.tsx#L17-L35)).
-- **Backend/DB:** Supabase Auth creates the user; `name` stored in `user_metadata`.
-- **Response/UI:** sets `done=true` → "Check your email" confirmation screen ([signup/page.tsx:37-54](src/app/signup/page.tsx#L37-L54)). Email confirmation link → [auth/callback/route.ts](src/app/auth/callback/route.ts) `exchangeCodeForSession` → redirect to `/dashboard`.
+- **Action:** fill form, complete the **Turnstile captcha**, submit. **Component:** [signup/page.tsx](src/app/signup/page.tsx). The `<Turnstile>` widget's `onSuccess` stores a token in state ([signup:113-116](src/app/signup/page.tsx#L113-L116)).
+- **Handler:** `handleSubmit` → `auth.signUp({ email, password, options:{ data:{ name }, captchaToken } })` ([signup:25-32](src/app/signup/page.tsx#L25-L32)). Supabase verifies the captcha token server-side (Turnstile must be enabled in the Supabase project).
+- **Backend/DB:** Supabase Auth creates the user (`name` → `user_metadata`); the `on_auth_user_created` trigger auto-inserts a `profiles` row with `subscription_status='inactive'` ([schema.sql:195-209](supabase/schema.sql#L195-L209)).
+- **Anti-enumeration:** a `"User already registered"` error is swallowed and the same "Check your email" screen is shown, so an attacker cannot probe which emails have accounts ([signup:33-38](src/app/signup/page.tsx#L33-L38)). **[High]**
+- **Response/UI:** `done=true` → "Check your email" screen. Email confirmation link → [auth/callback/route.ts](src/app/auth/callback/route.ts) `exchangeCodeForSession` → `/dashboard` → (middleware) → bounced to `/subscribe` until they pay.
 
 ### Journey B — Log in
-- **Action/Component:** [login/page.tsx](src/app/login/page.tsx). **Handler:** `signInWithPassword` → on success `window.location.href="/dashboard"` ([login/page.tsx:15-29](src/app/login/page.tsx#L15-L29)). Full navigation (not client router) so middleware re-runs and session cookie is present.
+- **Action/Component:** [login/page.tsx](src/app/login/page.tsx), also gated by a Turnstile captcha (token passed as `captchaToken`). **Handler:** `signInWithPassword` → on success `window.location.href="/dashboard"`. Full navigation (not client router) so middleware re-runs, the session cookie is present, and the subscription gate evaluates.
 
 ### Journey C — Connect Gmail
 1. Settings → "Connect Gmail" is an `<a href="/api/gmail/auth">` ([settings/page.tsx:259-263](src/app/settings/page.tsx#L259-L263)).
-2. [gmail/auth/route.ts](src/app/api/gmail/auth/route.ts) builds Google consent URL with scopes `gmail.readonly`, `gmail.send`, `gmail.modify`, `access_type:"offline"`, `prompt:"consent"` → redirects to Google.
-3. Google redirects back to [gmail/callback/route.ts](src/app/api/gmail/callback/route.ts): exchanges `code` for tokens, fetches the Gmail address via `users.getProfile`, and **upserts `gmail_email` + `gmail_refresh_token` into `gym_settings`** ([callback:28-44](src/app/api/gmail/callback/route.ts#L28-L44)).
-4. Redirects to `/settings?connected=true`; the page re-reads settings and cleans the URL ([settings/page.tsx:38-43](src/app/settings/page.tsx#L38-L43)).
+2. [gmail/auth/route.ts](src/app/api/gmail/auth/route.ts) builds Google consent URL with scopes `gmail.readonly`, `gmail.send`, `gmail.modify`, `access_type:"offline"`, `prompt:"consent"`, and sets an `oauth_gmail_state` cookie carrying a random `state` value → redirects to Google.
+3. Google redirects back to [gmail/callback/route.ts](src/app/api/gmail/callback/route.ts): **verifies the `state` param matches the `oauth_gmail_state` cookie** (CSRF protection — stops an attacker linking *their* Gmail to the victim's account; mismatch → `/settings?error=gmail_invalid_state`) ([callback:17-24](src/app/api/gmail/callback/route.ts#L17-L24)), exchanges `code` for tokens, fetches the Gmail address via `users.getProfile`, and **upserts `gmail_email` + an AES-256-GCM-`encryptToken`-ed `gmail_refresh_token` into `gym_settings`** ([callback:47-55](src/app/api/gmail/callback/route.ts#L47-L55)). It then clears the state cookie.
+4. Redirects to `/settings?connected=true`; the page re-reads settings and cleans the URL.
+5. On every later read (sync/send), the stored token is `decryptToken`-ed before use; values written before encryption existed (no `enc:v1:` prefix) are returned as-is and re-encrypted on the next OAuth callback ([token-crypto.ts:40-43](src/lib/token-crypto.ts#L40-L43)).
 
 ### Journey D — Sync inbox  *(core)*
 - **Action:** click "Sync". **Component/Handler:** `handleSync` in [inbox/page.tsx:118-138](src/app/inbox/page.tsx#L118-L138) → `POST /api/gmail/sync`.
@@ -375,6 +400,23 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 ### Journey J — Backfill historical sent mail
 - **Trigger:** manual `POST /api/style/backfill` (e.g. curl per [README.md:80-87](README.md#L80-L87)). Processes 20 outbound messages per call, excluding already-processed `message_id`s; returns `{ processed, skipped, remaining }`. ([style/backfill/route.ts](src/app/api/style/backfill/route.ts)).
 
+### Journey K — Subscribe (paywall) *(gates all app access)*
+1. A logged-in but un-subscribed user hits any protected page; middleware redirects them to `/subscribe` ([middleware.ts:96-114](middleware.ts#L96-L114)).
+2. [subscribe/page.tsx](src/app/subscribe/page.tsx) shows the plan and a "Subscribe" button → `POST /api/stripe/checkout`.
+3. [stripe/checkout/route.ts](src/app/api/stripe/checkout/route.ts): `getUser` (401 if absent); reads `NEXT_PUBLIC_STRIPE_PRICE_ID` (500 if unset); finds-or-creates a Stripe **Customer** (storing `stripe_customer_id` on `profiles` so repeat checkouts reuse it); creates a `mode:"subscription"` Checkout Session with `success_url=/dashboard`, `cancel_url=/subscribe`, and `metadata.supabase_uid = user.id`; returns `{ url }`.
+4. Client does `window.location.href = url` → Stripe-hosted checkout. On success Stripe redirects to `/dashboard`.
+5. **Asynchronously**, Stripe calls [stripe/webhook/route.ts](src/app/api/stripe/webhook/route.ts) (see Journey L). The `/dashboard` redirect and the activation are decoupled — if the webhook hasn't landed yet, middleware may briefly bounce the user back to `/subscribe` until `subscription_status` flips to `active`. **[Medium]**
+
+### Journey L — Stripe webhook (subscription state sync) *(server-to-server)*
+- **Trigger:** Stripe POSTs events to `/api/stripe/webhook`. Middleware lets it through untouched (no session) ([middleware.ts:65-70](middleware.ts#L65-L70)).
+- **Handler:** [stripe/webhook/route.ts](src/app/api/stripe/webhook/route.ts):
+  1. Reads the raw body + `stripe-signature`; **verifies the signature** with `STRIPE_WEBHOOK_SECRET` (400 on failure) — this is what authenticates the caller in lieu of a session.
+  2. Builds a **service-role** Supabase client (bypasses RLS).
+  3. `checkout.session.completed` → retrieve the subscription, compute `current_period_end`, and set `subscription_status='active'` + ids on `profiles`. **Primary key path is `session.metadata.supabase_uid`**; a fallback matches by `stripe_customer_id` (with a zero-row `count` check) and logs loudly if neither works.
+  4. `customer.subscription.updated` → set status `active`/`inactive` by `subscription_id`.
+  5. `customer.subscription.deleted` → set `inactive`.
+  - **Note:** the handler currently emits verbose `console.log`/`warn` debug lines (added while debugging activation) — see §18.
+
 ---
 
 # 7. Frontend Deep Dive
@@ -387,8 +429,9 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 | `/inbox` | [inbox/page.tsx](src/app/inbox/page.tsx) | client | Thread list + reader + AI reply (core; orchestrator ~274 lines + [components/](src/app/inbox/components/)) |
 | `/contacts` | [contacts/page.tsx](src/app/contacts/page.tsx) | client | CRM table with filters + inline type edit |
 | `/settings` | [settings/page.tsx](src/app/settings/page.tsx) | client | Gym rules, style examples, Gmail connection |
-| `/login`, `/signup` | [login](src/app/login/page.tsx), [signup](src/app/signup/page.tsx) | client | Supabase auth |
-| `/about`, `/contact`, `/privacy`, `/terms` | respective `page.tsx` | client | Marketing/legal static |
+| `/login`, `/signup` | [login](src/app/login/page.tsx), [signup](src/app/signup/page.tsx) | client | Supabase auth + Turnstile captcha |
+| `/subscribe` | [subscribe/page.tsx](src/app/subscribe/page.tsx) | client | Paywall; launches Stripe Checkout. Auth-required but subscription-exempt |
+| `/about`, `/contact`, `/privacy`, `/terms` | respective `page.tsx` | client | Marketing/legal static. `/privacy` (261 lines) + `/terms` (217 lines) are substantive legal copy; `/contact` (113) has a **decorative, non-functional** form (`onSubmit` just `preventDefault()`s) and mailto links |
 | `/auth/callback` | [auth/callback/route.ts](src/app/auth/callback/route.ts) | handler | Session exchange |
 
 ### Layouts & providers
@@ -474,6 +517,8 @@ The backend = **Server Actions** + **Route Handlers** + **domain library** + **P
 | `/api/style/samples` | GET | — | `{samples[]}` | unauth 401 | `style_samples` (RLS-scoped) |
 | `/api/style/samples` | DELETE | `?id` | `{ok,sampleCount}` | unauth 401; missing-id 400 | `style_samples`, `updateStyleProfile` |
 | `/api/style/status` | GET | — | `{sampleCount,toneScore,avgWordCount,updatedAt}` | unauth 401 | `style_profile` |
+| `/api/stripe/checkout` | POST | — | `{url}` (Checkout session) | unauth 401; missing price 500 | Stripe, `profiles` (read+write `stripe_customer_id`) |
+| `/api/stripe/webhook` | POST | raw Stripe event + `stripe-signature` | `{received:true}` | **signature verify** 400; handler error 500 | Stripe, `profiles` via **service-role** client |
 | `/auth/callback` | GET | `?code`,`?next` | 302 | exchange error → `/login?error` | Supabase Auth |
 
 ### Domain/business logic
@@ -489,11 +534,15 @@ The backend = **Server Actions** + **Route Handlers** + **domain library** + **P
 
 **`src/lib/usage-limits.ts`** — `enforceDailyLimit(supabase, kind)` calls `increment_usage` RPC; **fails open** on RPC error ([usage-limits.ts:37-67](src/lib/usage-limits.ts#L37-L67)). Defaults: `generate:200/day`, `add_sample:50/day`.
 
+**`src/lib/subscription.ts`** — `getUserSubscriptionStatus(userId)` reads `profiles.subscription_status`/`current_period_end` and returns `{ active, currentPeriodEnd }`. A convenience reader; note the *actual* gate in middleware queries `profiles` directly rather than calling this helper, so the two could drift. **[Medium]**
+
+**`src/lib/token-crypto.ts`** — `encryptToken`/`decryptToken` for the Gmail refresh token. AES-256-GCM (authenticated encryption: confidentiality + integrity), 96-bit random IV per call, output format `enc:v1:<ivHex>.<authTagHex>.<ciphertextHex>`. Key from `GMAIL_TOKEN_ENCRYPTION_KEY` (must be 32 bytes / 64 hex chars, else throws). `decryptToken` is **backward-compatible**: a stored value without the `enc:v1:` prefix is treated as legacy plaintext and returned unchanged (so existing connections keep working until the next OAuth re-connect re-encrypts them).
+
 ### Middleware (cross-cutting)
 [middleware.ts](middleware.ts): CSP nonce + session refresh + route guards (detailed in §5/§11). Also static security headers in [next.config.ts](next.config.ts).
 
 ### Database access
-All via the Supabase query builder with the **anon key**, scoped by RLS. RPCs used: `match_style_samples` (security invoker), `apply_style_feedback` (security invoker), `increment_usage` (security definer). No service-role key is used anywhere. **[High]**
+Almost all access is via the Supabase query builder with the **anon key**, scoped by RLS. RPCs used: `match_style_samples` (security invoker), `apply_style_feedback` (security invoker), `increment_usage` (security definer). **One exception:** the Stripe webhook ([api/stripe/webhook/route.ts](src/app/api/stripe/webhook/route.ts)) builds a client with the **service-role key** (`SUPABASE_SERVICE_ROLE_KEY`), which **bypasses RLS**, to write subscription state into `profiles`. This is required because the webhook has no user session; its trust comes from Stripe signature verification, not from `auth.uid()`. It is the only service-role usage in the codebase. **[High]**
 
 ---
 
@@ -506,6 +555,7 @@ Source: [supabase/schema.sql](supabase/schema.sql), [style-memory-schema.sql](su
 ```
 auth.users (Supabase-managed)
    │ 1
+   ├──1── profiles            (subscription state; PK=auth.users.id; auto-created by trigger)
    ├──1── gym_settings        (gym rules + Gmail token; one row/user)
    ├──*── contacts            (unique: user_id+email)
    ├──*── email_threads ──────────────┐ (unique: user_id+gmail_thread_id)
@@ -527,7 +577,8 @@ auth.users (Supabase-managed)
 
 | Table | Why it exists | Used by | Key constraints |
 |---|---|---|---|
-| `gym_settings` | Per-user gym name, reply rules, **Gmail email + refresh token**, last-sync time | settings, gmail/*, ai/generate | `unique(user_id)`; RLS all |
+| `profiles` | Per-user **subscription state**: `stripe_customer_id`, `subscription_id`, `subscription_status` (default `'inactive'`), `current_period_end` | middleware gate, checkout, webhook, [subscription.ts](src/lib/subscription.ts) | PK = `auth.users.id` (cascade delete); RLS **select-only** for owners (`auth.uid()=id`); **no insert/update policy** — writes happen only via the service-role webhook. Rows auto-created by the `on_auth_user_created` trigger |
+| `gym_settings` | Per-user gym name, reply rules, **Gmail email + encrypted refresh token**, last-sync time | settings, gmail/*, ai/generate | `unique(user_id)`; RLS all |
 | `contacts` | CRM of senders | contacts page, sync | `unique(user_id,email)`; type check; RLS all |
 | `email_threads` | Grouped Gmail conversations | inbox, dashboard, sync | `unique(user_id,gmail_thread_id)`; status check; **`gmail_history_id`** (lets sync skip unchanged threads); indexes on `(user_id,status)` and `(user_id,last_message_at desc)` |
 | `email_messages` | Individual messages (raw HTML/plain body) | thread detail, sync, backfill | `unique(gmail_message_id)`; FK thread cascade; **RLS via parent thread's user_id** (subquery policy) |
@@ -544,12 +595,14 @@ auth.users (Supabase-managed)
 - `match_style_samples(query_emb vector(768), match_count int=3)` — kNN over `style_samples`, security **invoker** (RLS applies), `where embedding is not null and word_count>=10`. **Ranking now blends in feedback `weight`** (`effective_rank = cosine_distance * (1.0 / weight)`), so a "👍"-boosted sample surfaces first and a "wrong style"-demoted one sinks; it returns `weight` in the result row. Trade-off: the `ORDER BY` can no longer be served by the IVFFlat distance index, so it does a per-user scan+sort (fine at per-user sample volumes). ([style-memory-schema.sql](supabase/style-memory-schema.sql)).
 - `apply_style_feedback(p_generation_id, p_rating)` — adjusts sample `weight` by rating delta, clamped 0.1–2.0, security invoker ([style-memory-schema.sql:129-153](supabase/style-memory-schema.sql#L129-L153)).
 - `increment_usage(p_kind, p_limit)` — atomic upsert+increment, returns `(new_count, exceeded)`, security **definer** with `search_path=public` ([usage-limits-schema.sql:27-46](supabase/usage-limits-schema.sql#L27-L46)).
+- `handle_new_user()` + trigger `on_auth_user_created` — `security definer` trigger that inserts a `profiles` row (`on conflict do nothing`) **after every new `auth.users` insert**, so every account starts with an `inactive` subscription profile ([schema.sql:195-209](supabase/schema.sql#L195-L209)).
 
 ### Data lifecycle
 - A sync creates/updates `contacts`, `email_threads`, `email_messages`; stale threads auto-archived.
 - Sending sets `email_threads.status='replied'` and (when a generation exists) `ai_generations.status='sent'`.
 - Style: outbound text → `style_samples` (+embedding) → recompute `style_profile`; feedback adjusts `weight`.
 - Usage: each billed call increments `usage_counters` for `(user, today, kind)`.
+- Subscription: signup → trigger creates `profiles(inactive)`; checkout creates/stores `stripe_customer_id`; webhook flips `subscription_status` (`active`/`inactive`) + `current_period_end`; middleware reads it on every protected request.
 
 > **Note [High]:** `weight` in `style_samples` is written by feedback **and now consumed by retrieval** — `match_style_samples` divides cosine distance by `weight`, so the "Sound like you? Yes/No" feedback actually reorders which examples get injected into future drafts (changed in commit `13b9e29`). (This resolves the earlier "weight written but unused" gap.)
 
@@ -594,15 +647,18 @@ No global store, so navigating between Dashboard and Inbox **refetches** threads
 
 ### Token handling
 - Supabase tokens: managed in cookies by `@supabase/ssr`.
-- Gmail refresh token: stored in `gym_settings.gmail_refresh_token` in **plaintext**; each Gmail route reconstructs an `OAuth2` client and `setCredentials({ refresh_token })` ([sync:160-165](src/app/api/gmail/sync/route.ts#L160-L165), [send:28-33](src/app/api/gmail/send/route.ts#L28-L33)). **[High]**
+- Gmail refresh token: stored in `gym_settings.gmail_refresh_token`, now **encrypted at rest** with AES-256-GCM ([token-crypto.ts](src/lib/token-crypto.ts)). Written `encryptToken`-ed in the OAuth callback ([callback:51](src/app/api/gmail/callback/route.ts#L51)); each Gmail route `decryptToken`s it before `setCredentials({ refresh_token })` ([sync:189](src/app/api/gmail/sync/route.ts#L189), [send:45](src/app/api/gmail/send/route.ts#L45)). Legacy plaintext rows decrypt to themselves and get re-encrypted on the next re-connect. Requires `GMAIL_TOKEN_ENCRYPTION_KEY`. **[High]**
+- Captcha: a Cloudflare Turnstile token is collected on login/signup and handed to Supabase Auth (`captchaToken`), which verifies it server-side; the app does not verify it itself.
 - `signOut()` ([user-context.tsx:46-49](src/lib/user-context.tsx#L46-L49)) calls `auth.signOut()` then redirects to `/`.
 
 ### Authorization model
 - **Primary boundary = Postgres RLS.** Every table has `auth.uid() = user_id` policies (or, for `email_messages`, an EXISTS subquery on the parent thread). The anon-key client cannot read/write other users' rows. [AGENTS.md](AGENTS.md) states RLS is *the* ownership boundary and warns against redundant `.eq("user_id")` filters.
-- **Secondary checks:** every action/route calls `getUser()` and returns 401/empty if absent; feedback route additionally verifies generation ownership before acting ([feedback:30-39](src/app/api/style/feedback/route.ts#L30-L39)).
+- **Secondary checks:** every action/route calls `getUser()` and returns 401/empty if absent; the billed API routes (`/api/ai/generate`, `/api/gmail/*`, `/api/style/*`) go further and call `requirePaidUser(supabase)` ([subscription.ts](src/lib/subscription.ts)), which combines the `getUser()` check with an `active`-subscription check (401/402); feedback route additionally verifies generation ownership before acting ([feedback:30-39](src/app/api/style/feedback/route.ts#L30-L39)).
 
-### Protected routes
-Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes` lists ([middleware.ts:4-5](middleware.ts#L4-L5)). The list now correctly guards all four app pages — `/dashboard`, `/inbox`, `/contacts`, `/settings` — redirecting anonymous visits to `/login` and bouncing logged-in users off `/login`/`/signup`. (The earlier stale entries and the duplicate `src/middleware.ts` were fixed/removed in commit `6c27e79`.) RLS remains the actual data boundary; the middleware is UX/defence-in-depth.
+### Protected routes & subscription gate
+Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes`/`subscriptionExemptRoutes` lists ([middleware.ts:4-7](middleware.ts#L4-L7)). It guards all four app pages — `/dashboard`, `/inbox`, `/contacts`, `/settings` — redirecting anonymous visits to `/login` and bouncing logged-in users off `/login`/`/signup`. **On top of auth, it enforces billing:** a logged-in user with `profiles.subscription_status !== 'active'` visiting a protected page is redirected to `/subscribe` ([middleware.ts:96-114](middleware.ts#L96-L114)). `/subscribe` itself requires login but is subscription-exempt. The Stripe webhook is bypassed entirely (no session). RLS remains the actual *data* boundary; the middleware enforces *access* (auth + payment) and is UX/defence-in-depth for the former.
+
+> **Note [High]:** the *middleware* subscription gate still only fires for paths in `protectedRoutes` — the four **page** routes; `/api/*` is not in that list. The billed API routes no longer rely on it, though: each one calls `requirePaidUser(supabase)` ([subscription.ts](src/lib/subscription.ts)) at the top of the handler, which checks auth **and** `profiles.subscription_status === 'active'` and returns 401/402 otherwise. So a logged-in-but-un-subscribed (or churned) user who calls `POST /api/ai/generate`, `/api/gmail/sync`, `/api/gmail/send`, or any `/api/style/*` endpoint **directly** is now rejected at the billed-work layer, not just redirected at the UI layer. Daily usage caps remain as a second guard. **[High]**
 
 ---
 
@@ -612,8 +668,8 @@ Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes` lists
 - **Purpose:** database, auth, RLS, RPCs.
 - **Data exchanged:** all user data; auth credentials/sessions.
 - **Entry points:** [src/lib/supabase/client.ts](src/lib/supabase/client.ts) (browser), [server.ts](src/lib/supabase/server.ts) (server), [middleware.ts](middleware.ts).
-- **Failure handling:** factories throw a descriptive error if env vars are missing/invalid ([client.ts:11-15](src/lib/supabase/client.ts#L11-L15)); middleware degrades gracefully if Supabase env is absent ([middleware.ts:33-38](middleware.ts#L33-L38)); `UserProvider` wraps `createClient()` in try/catch ([user-context.tsx:27-29](src/lib/user-context.tsx#L27-L29)).
-- **Security:** anon key + RLS; no service-role key.
+- **Failure handling:** factories throw a descriptive error if env vars are missing/invalid ([client.ts:11-15](src/lib/supabase/client.ts#L11-L15)); middleware degrades gracefully if Supabase env is absent ([middleware.ts:36-41](middleware.ts#L36-L41)); `UserProvider` wraps `createClient()` in try/catch ([user-context.tsx:27-29](src/lib/user-context.tsx#L27-L29)).
+- **Security:** anon key + RLS everywhere **except** the Stripe webhook, which uses the **service-role key** (`SUPABASE_SERVICE_ROLE_KEY`, bypasses RLS) to write `profiles`.
 
 ### B. Google Gemini (`@google/generative-ai`)
 - **Purpose:** reply generation (`gemini-2.5-flash-lite`) + embeddings (`gemini-embedding-001`).
@@ -627,9 +683,21 @@ Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes` lists
 - **Data exchanged:** OAuth code/tokens; thread & message payloads (in); raw MIME messages (out).
 - **Entry points:** [gmail/auth](src/app/api/gmail/auth/route.ts), [callback](src/app/api/gmail/callback/route.ts), [sync](src/app/api/gmail/sync/route.ts), [send](src/app/api/gmail/send/route.ts).
 - **Failure handling:** sync wraps everything in try/catch returning 500 with message + a per-thread `dropped[]` diagnostic array ([sync:319-326, 177](src/app/api/gmail/sync/route.ts#L319-L326)); missing env vars → explicit 500; not-connected → 400.
-- **Security:** scopes `gmail.readonly`/`send`/`modify`; refresh token in `gym_settings` (plaintext); inbound HTML sanitized + iframe-sandboxed; outbound headers CRLF-validated.
+- **Security:** scopes `gmail.readonly`/`send`/`modify`; refresh token in `gym_settings` **AES-256-GCM-encrypted at rest** ([token-crypto.ts](src/lib/token-crypto.ts)); OAuth callback **CSRF-protected via `state` cookie**; inbound HTML sanitized + iframe-sandboxed; outbound headers CRLF-validated.
 
-### D. Vercel (deployment) — platform, not called from code.
+### D. Stripe (`stripe`)
+- **Purpose:** subscription billing — Checkout sessions + lifecycle webhook.
+- **Data exchanged:** out — customer email, `supabase_uid` metadata, price id; in — Checkout URL, subscription objects, signed webhook events.
+- **Entry points:** [stripe/checkout/route.ts](src/app/api/stripe/checkout/route.ts) (server-side `POST`, returns hosted URL), [stripe/webhook/route.ts](src/app/api/stripe/webhook/route.ts) (Stripe → app).
+- **Failure handling:** checkout returns 401/500 on missing user/price; webhook returns 400 on bad/missing signature, 500 on handler error, and logs (does not fail the request) on individual DB update errors.
+- **Security:** secret key server-side only (`STRIPE_SECRET_KEY`); webhook authenticated by **signature verification** with `STRIPE_WEBHOOK_SECRET`; webhook bypasses middleware auth (no session) and writes via service-role.
+
+### E. Cloudflare Turnstile (`@marsidev/react-turnstile`)
+- **Purpose:** captcha / bot protection on login + signup.
+- **Data exchanged:** site key (`NEXT_PUBLIC_TURNSTILE_SITE_KEY`) out; a verification token in, forwarded to Supabase as `captchaToken`.
+- **Verification:** performed by **Supabase Auth** (the project must have Turnstile enabled with the matching secret), not by app code. CSP already allowlists `challenges.cloudflare.com` ([middleware.ts:13,17-18](middleware.ts#L13-L18)).
+
+### F. Vercel (deployment) — platform, not called from code.
 
 > **QStash** appears only as a column name (`scheduled_follow_ups.qstash_message_id`) — there is **no QStash integration in the app code**. **[High]** It's a Phase-2 placeholder.
 
@@ -639,7 +707,7 @@ Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes` lists
 
 | # | Feature | Entry point(s) | Main files | DB deps | API/Action deps | Related components |
 |---|---|---|---|---|---|---|
-| 1 | **Auth (signup/login/session)** | `/signup`,`/login` | login/signup pages, [auth/callback](src/app/auth/callback/route.ts), [middleware.ts](middleware.ts), [user-context.tsx](src/lib/user-context.tsx) | `auth.users` | Supabase Auth | UserProvider, Navbar |
+| 1 | **Auth (signup/login/session + captcha)** | `/signup`,`/login` | login/signup pages (Turnstile), [auth/callback](src/app/auth/callback/route.ts), [middleware.ts](middleware.ts), [user-context.tsx](src/lib/user-context.tsx) | `auth.users`,`profiles` (trigger) | Supabase Auth, Turnstile | UserProvider, Navbar |
 | 2 | **Gmail connection** | Settings → `/api/gmail/auth` | [gmail/auth](src/app/api/gmail/auth/route.ts), [callback](src/app/api/gmail/callback/route.ts) | `gym_settings` | Google OAuth | settings page |
 | 3 | **Gmail sync** | Inbox "Sync" | [gmail/sync](src/app/api/gmail/sync/route.ts) | `contacts`,`email_threads`,`email_messages`,`gym_settings` | Gmail API | InboxPage |
 | 4 | **Inbox reading** | `/inbox` | [inbox/page.tsx](src/app/inbox/page.tsx), [threads.ts](src/app/actions/threads.ts) | `email_threads`,`email_messages`,`contacts` | `listThreads`,`getThreadDetail` | ThreadView, MessageBubble, EmailHtmlFrame |
@@ -652,6 +720,8 @@ Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes` lists
 | 11 | **Dashboard** | `/dashboard` | [dashboard/page.tsx](src/app/dashboard/page.tsx) | `email_threads` | `listThreads` | StatCard, QuickAction |
 | 12 | **Usage limits** | inside generate/add-sample | [usage-limits.ts](src/lib/usage-limits.ts) | `usage_counters` | `increment_usage` | — |
 | 13 | **Marketing/legal** | `/`,`/about`,`/contact`,`/privacy`,`/terms` | respective pages | — | — | LandingNavbar, Footer |
+| 14 | **Subscription / billing (paywall)** | `/subscribe`, Stripe Checkout/webhook | [subscribe/page.tsx](src/app/subscribe/page.tsx), [stripe/checkout](src/app/api/stripe/checkout/route.ts), [stripe/webhook](src/app/api/stripe/webhook/route.ts), [middleware.ts](middleware.ts), [subscription.ts](src/lib/subscription.ts) | `profiles` | Stripe | — |
+| 15 | **Gmail token encryption** | inside connect/sync/send | [token-crypto.ts](src/lib/token-crypto.ts) | `gym_settings` | Node `crypto` | — |
 
 **Defined-but-unused (data model only):** templates, scheduled_follow_ups, activity_logs. **[High]**
 
@@ -711,7 +781,9 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 49. **[src/app/api/style/__tests__/add-sample.test.ts](src/app/api/style/__tests__/add-sample.test.ts)** — route test.
 50. **[README.md](README.md)** — product + setup overview.
 
-> **Not in this top-50 but worth knowing:** the inbox sub-components in [src/app/inbox/components/](src/app/inbox/components/) (`ThreadView`, `MessageBubble`, `EmailHtmlFrame`, `ReplyPanel`, `StyleFeedback`) and [src/app/api/style/samples/route.ts](src/app/api/style/samples/route.ts) (list/delete examples) — both introduced/extracted in the latest change set. The previously-listed dead `src/middleware.ts` and the unused `ui/ScoreRing|Stepper|ProgressBar|ToggleChip` have since been **deleted**.
+> **Not in this top-50 but worth knowing:** the inbox sub-components in [src/app/inbox/components/](src/app/inbox/components/) (`ThreadView`, `MessageBubble`, `EmailHtmlFrame`, `ReplyPanel`, `StyleFeedback`) and [src/app/api/style/samples/route.ts](src/app/api/style/samples/route.ts) (list/delete examples). The previously-listed dead `src/middleware.ts` and the unused `ui/ScoreRing|Stepper|ProgressBar|ToggleChip` have since been **deleted**.
+>
+> **Billing/security subsystem (added after the original top-50 was numbered; rank them ~alongside the integration routes):** [src/app/api/stripe/webhook/route.ts](src/app/api/stripe/webhook/route.ts) (the only service-role writer; source of truth for subscription state), [src/app/api/stripe/checkout/route.ts](src/app/api/stripe/checkout/route.ts), [src/lib/token-crypto.ts](src/lib/token-crypto.ts) (Gmail token at-rest crypto — breaking it breaks all Gmail access), [src/lib/subscription.ts](src/lib/subscription.ts), and [src/app/subscribe/page.tsx](src/app/subscribe/page.tsx). Also note `middleware.ts` (#5) now additionally enforces the **subscription gate**, and `supabase/schema.sql` (#3) now defines the `profiles` table + `on_auth_user_created` trigger.
 
 ---
 
@@ -789,16 +861,49 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 [UI] optimistic local map() update; editingId cleared
 ```
 
+### Flow 5 — Subscribe & activate (two decoupled halves)
+
+```
+[Half A — checkout, synchronous]
+[Input] click "Subscribe" on /subscribe
+   ↓ POST /api/stripe/checkout
+[API] auth.getUser() (401)  → read NEXT_PUBLIC_STRIPE_PRICE_ID (500 if missing)
+   → find/create Stripe Customer; persist profiles.stripe_customer_id
+   → stripe.checkout.sessions.create(mode:subscription,
+       metadata.supabase_uid=user.id, success_url=/dashboard)
+   ↓ { url }
+[UI] window.location = url → Stripe-hosted checkout → on success → /dashboard
+
+[Half B — webhook, asynchronous, server-to-server]
+[Input] Stripe POSTs event → /api/stripe/webhook (middleware bypass)
+[API] verify stripe-signature (400 if bad)  → service-role Supabase client (bypasses RLS)
+   switch event.type:
+     checkout.session.completed → retrieve subscription → period_end
+        → UPDATE profiles SET subscription_status='active',... WHERE id = metadata.supabase_uid
+          (fallback: WHERE stripe_customer_id = customerId, with zero-row count guard)
+     customer.subscription.updated → status active|inactive WHERE subscription_id=…
+     customer.subscription.deleted → status inactive WHERE subscription_id=…
+   ↓ { received:true }
+
+[Gate] next protected-page request: middleware reads profiles.subscription_status
+        active → allowed ; otherwise → redirect /subscribe
+```
+
+> The two halves race: the `/dashboard` redirect (Half A) can land before the webhook (Half B) flips the status, briefly bouncing the user back to `/subscribe`. **[Medium]**
+
 ---
 
 # 16. Security Architecture (current implementation)
 
 ### Authentication
-- Supabase email/password; cookie sessions refreshed in middleware ([middleware.ts:59-61](middleware.ts#L59-L61)).
+- Supabase email/password; cookie sessions refreshed in middleware.
+- **Cloudflare Turnstile** captcha on login/signup, verified by Supabase Auth (bot/abuse mitigation).
+- Signup is **non-enumerable** — `"User already registered"` is swallowed and shows the same success screen ([signup:33-38](src/app/signup/page.tsx#L33-L38)).
 
 ### Authorization
-- **RLS is the boundary** — `auth.uid() = user_id` on all tables (or parent-thread subquery for `email_messages`) ([schema.sql](supabase/schema.sql), [style-memory-schema.sql](supabase/style-memory-schema.sql)). Anon key used everywhere; **service-role key never used** (verified). RPCs are mostly `security invoker` (RLS preserved); `increment_usage` is `security definer` with a fixed `search_path` and writes only its own counter row.
-- App-layer checks: per-endpoint `getUser()`; ownership re-check in feedback route.
+- **RLS is the primary boundary** — `auth.uid() = user_id` on all tables (or parent-thread subquery for `email_messages`; `profiles` is `auth.uid() = id`, **select-only** for owners) ([schema.sql](supabase/schema.sql), [style-memory-schema.sql](supabase/style-memory-schema.sql)). Anon key used everywhere **except the Stripe webhook**, which uses the **service-role key (bypasses RLS)** to write `profiles` — justified because it has no session and is authenticated by Stripe signature instead. RPCs are mostly `security invoker` (RLS preserved); `increment_usage` and the `handle_new_user` trigger are `security definer`.
+- **Subscription/access gate (two layers)** — (1) middleware redirects logged-in, non-`active` users away from the four app *page* routes to `/subscribe`; (2) the billed API routes (`/api/ai/generate`, `/api/gmail/*`, `/api/style/*`) enforce the same check in-handler via the shared `requirePaidUser(supabase)` helper ([subscription.ts](src/lib/subscription.ts)) — auth + `profiles.subscription_status === 'active'`, returning 401/402. The paywall therefore now covers the cost-incurring endpoints, not just the UI (see §11).
+- App-layer checks: per-endpoint `getUser()`; ownership re-check in feedback route; Stripe webhook signature verification.
 
 ### Input validation
 - **At the sink:** Gmail `to`/`subject` rejected if they contain CR/LF (header-injection prevention) ([send:14-16](src/app/api/gmail/send/route.ts#L14-L16)).
@@ -811,12 +916,17 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 ### API protections
 - All sensitive endpoints require auth; AI endpoints have **daily caps** (fail-open) as a cost guard.
-- Untrusted email HTML: sanitized (script/handler/`javascript:`/`data:` stripped) at sync, then rendered in a **sandboxed iframe without `allow-same-origin`** — the real containment ([inbox/page.tsx:538](src/app/inbox/page.tsx#L538), [sync:108-117](src/app/api/gmail/sync/route.ts#L108-L117)).
+- **Stripe webhook** authenticated by HMAC signature verification (`STRIPE_WEBHOOK_SECRET`); rejects unsigned/forged events with 400 before any DB write.
+- **Gmail OAuth callback** is CSRF-protected by a `state` cookie matched against the returned `state` param.
+- Untrusted email HTML: sanitized (script/handler/`javascript:`/`data:` stripped) at sync, then rendered in a **sandboxed iframe without `allow-same-origin`** — the real containment ([inbox/components/EmailHtmlFrame.tsx](src/app/inbox/components/EmailHtmlFrame.tsx), [sync:108-117](src/app/api/gmail/sync/route.ts#L108-L117)).
 - **CSP with per-request nonce + `strict-dynamic`** ([middleware.ts:7-18](middleware.ts#L7-L18)); plus `X-Frame-Options:DENY`, `X-Content-Type-Options:nosniff`, `Referrer-Policy`, `Permissions-Policy` ([next.config.ts](next.config.ts)).
 
 ### Secret management
-- All secrets via env vars (Supabase keys, `GEMINI_API_KEY`, Google OAuth creds). `.env.local` git-ignored; `.env.local.example` documents shape. **[Medium]** (example file content not read here; structure inferred from usage.)
-- **Plaintext Gmail refresh token at rest** in `gym_settings` ([schema.sql:12](supabase/schema.sql#L12)) — RLS-protected but not encrypted. **[High]**
+- All secrets via env vars: Supabase anon **and service-role** keys, `GEMINI_API_KEY`, Google OAuth creds, `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`NEXT_PUBLIC_STRIPE_PRICE_ID`, `GMAIL_TOKEN_ENCRYPTION_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `NEXT_PUBLIC_APP_URL`. `.env.local` git-ignored. **[Medium]**
+- **Two especially sensitive secrets** now exist: `SUPABASE_SERVICE_ROLE_KEY` (full DB access, RLS-bypassing — used only in the webhook) and `GMAIL_TOKEN_ENCRYPTION_KEY` (loss = inability to decrypt stored Gmail tokens; leak = the encryption is moot). Both must be server-only env vars (they are — no `NEXT_PUBLIC_` prefix).
+
+### Data-at-rest encryption
+- **Gmail refresh token is now encrypted at rest** with AES-256-GCM ([token-crypto.ts](src/lib/token-crypto.ts)) before storage in `gym_settings.gmail_refresh_token`, replacing the previous plaintext storage. Authenticated encryption (GCM auth tag) also detects tampering. Legacy plaintext rows are tolerated (returned as-is) and re-encrypted on the next Gmail re-connect. **[High]** Residual exposure: a token is briefly plaintext in process memory whenever a Gmail call runs, and the encryption key sits in the same environment as the DB credentials.
 
 ---
 
@@ -824,6 +934,9 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 ### Rendering strategy
 - Pages are client components that render a spinner, then fetch on mount and hydrate. Root layout forces dynamic rendering via `connection()` ([layout.tsx:17](src/app/layout.tsx#L17)). Minimal use of RSC data loading. **[High]**
+
+### Middleware cost
+- Middleware runs `auth.getUser()` on every matched request, **plus an extra `profiles` SELECT** on protected-page requests for the subscription gate ([middleware.ts:96-101](middleware.ts#L96-L101)). So a logged-in user loading `/inbox` incurs: middleware `getUser` + `profiles` query, then the page's own `getUser` (via `UserProvider`) and data fetches. Auth is now effectively resolved twice and subscription once per protected navigation. Acceptable at current scale; no caching of the subscription status between requests. **[Medium]**
 
 ### Caching
 - No client data cache (no React Query/SWR). Server mutations call `revalidatePath()`. Browser Supabase client is a singleton. **[High]**
@@ -847,23 +960,28 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 # 18. Technical Debt Inventory
 
-> Several items from the previous revision have been **resolved** and are no longer debt: the duplicate/misconfigured middleware (now a single correct file), the 722-line `inbox/page.tsx` (split into `inbox/components/*`), the strictly-sequential sync N+1 (now incremental + parallel), `weight` being unused in ranking (now consumed by `match_style_samples`), and the unused deps/components/SSE branch (deleted). They're called out here only so a reader of the old doc isn't confused.
+> Several items from previous revisions have been **resolved** and are no longer debt: the duplicate/misconfigured middleware (now a single correct file), the 722-line `inbox/page.tsx` (split into `inbox/components/*`), the strictly-sequential sync N+1 (now incremental + parallel), `weight` being unused in ranking (now consumed by `match_style_samples`), the unused deps/components/SSE branch (deleted), and — new this revision — **plaintext Gmail refresh tokens** (now AES-256-GCM encrypted via [token-crypto.ts](src/lib/token-crypto.ts)), and — also this revision — the **subscription paywall not covering billed API routes** (every billed route — `/api/ai/generate`, `/api/gmail/*`, `/api/style/*` — now calls `requirePaidUser` from [subscription.ts](src/lib/subscription.ts), which enforces auth + an `active` subscription in-handler). They're called out here so a reader of an older doc isn't confused.
 
 ### High Risk
-1. **Plaintext Gmail refresh tokens** in `gym_settings` ([schema.sql:12](supabase/schema.sql#L12)). *Why high:* long-lived read/send/modify access to a real mailbox; a DB dump or anon-key path bug exposes it. **[High]**
-2. **Style learning from live sends often doesn't fire.** `/api/ai/generate` returns `generation:null` ([generate:112](src/app/api/ai/generate/route.ts#L112)), so `approveGeneration`'s `addStyleSample` path is usually skipped on fresh drafts. *Why high:* the headline feature's send-time feedback loop is partially inert; learning effectively depends on manual add-sample/backfill. **[Medium-High]** (Confidence Medium on real-world frequency since a thread could carry a pre-existing generation.)
+1. **Style learning from live sends often doesn't fire.** `/api/ai/generate` returns `generation:null` ([generate:112](src/app/api/ai/generate/route.ts#L112)), so `approveGeneration`'s `addStyleSample` path is usually skipped on fresh drafts. *Why high:* the headline feature's send-time feedback loop is partially inert; learning effectively depends on manual add-sample/backfill. **[Medium-High]** (Confidence Medium on real-world frequency since a thread could carry a pre-existing generation.)
 
 ### Medium Risk
-3. **Multiple near-duplicate HTML/text cleaners** with subtle differences: `cleanEmailText` ([style-memory.ts:33](src/lib/style-memory.ts#L33)), `toPlainText` ([generate:11](src/app/api/ai/generate/route.ts#L11)), `cleanBody` (now in [inbox/components/MessageBubble.tsx](src/app/inbox/components/MessageBubble.tsx)), `sanitize` ([sync](src/app/api/gmail/sync/route.ts)). *Why:* will drift — the inbox copy now also owns quoted-text stripping, widening the divergence. **[High]**
-4. **200-thread single invocation for sync.** Incremental skip + 4-way parallelism reduced the load, but a first sync (or a busy mailbox where many threads changed) still fetches up to 200 threads in one serverless call. *Why:* timeout/rate-limit risk at the tail. **[Medium]**
-5. **Value-interpolated `in(...)` filters** in sync/backfill ([sync](src/app/api/gmail/sync/route.ts), [backfill:40-46](src/app/api/style/backfill/route.ts#L40-L46)) — brushes the "no interpolation in filters" rule and has a documented URL-budget ceiling. **[Medium]**
-6. **Redundant `.eq("user_id")` filters** contradict [AGENTS.md](AGENTS.md) (e.g. [threads.ts:16](src/app/actions/threads.ts#L16), [contacts.ts:14](src/app/actions/contacts.ts#L14)). Harmless defense-in-depth but the kind of drift the doc warns about. (Note: the new `samples` route deliberately omits them, per the convention.) **[High]**
-7. **Thin test coverage** — only `style-memory.ts` and `style/*` are tested ([jest.config.ts](jest.config.ts)); the riskiest code (sync, send, middleware, generate) is untested. The sync rewrite (parallel `mapPool`, incremental partition) added logic with no tests. **[High]**
+2. **Multiple near-duplicate HTML/text cleaners** with subtle differences: `cleanEmailText` ([style-memory.ts:33](src/lib/style-memory.ts#L33)), `toPlainText` ([generate:11](src/app/api/ai/generate/route.ts#L11)), `cleanBody` (now in [inbox/components/MessageBubble.tsx](src/app/inbox/components/MessageBubble.tsx)), `sanitize` ([sync](src/app/api/gmail/sync/route.ts)). *Why:* will drift — the inbox copy now also owns quoted-text stripping, widening the divergence. **[High]**
+3. **200-thread single invocation for sync.** Incremental skip + 4-way parallelism reduced the load, but a first sync (or a busy mailbox where many threads changed) still fetches up to 200 threads in one serverless call. *Why:* timeout/rate-limit risk at the tail. **[Medium]**
+4. **Value-interpolated `in(...)` filters** in sync/backfill ([sync](src/app/api/gmail/sync/route.ts), [backfill:40-46](src/app/api/style/backfill/route.ts#L40-L46)) — brushes the "no interpolation in filters" rule and has a documented URL-budget ceiling. **[Medium]**
+5. **Redundant `.eq("user_id")` filters** contradict [AGENTS.md](AGENTS.md) (e.g. [threads.ts:16](src/app/actions/threads.ts#L16), [contacts.ts:14](src/app/actions/contacts.ts#L14)). Harmless defense-in-depth but the kind of drift the doc warns about. (Note: the new `samples` route deliberately omits them, per the convention.) **[High]**
+6. **Thin test coverage** — only `style-memory.ts` and `style/*` are tested ([jest.config.ts](jest.config.ts)); the riskiest code (sync, send, middleware, generate) is untested. The sync rewrite (parallel `mapPool`, incremental partition) added logic with no tests. **[High]**
+
+6b. **Verbose debug logging in the Stripe webhook.** [stripe/webhook/route.ts](src/app/api/stripe/webhook/route.ts) emits many `console.log/warn/error` lines (added while debugging activation, per commits `3272c47`/`9a92928`), some including `customerId`/`subscriptionId`/`uid`. *Why:* log noise + low-grade identifier leakage into logs; should be trimmed now that activation works. **[Medium]**
+6c. **Checkout↔webhook activation race.** Checkout redirects to `/dashboard` while activation happens asynchronously in the webhook; if the webhook is slow, the user is bounced to `/subscribe` despite having paid. No "pending"/polling state. **[Medium]**
+6d. **Two sources of truth for subscription status.** Middleware queries `profiles.subscription_status` inline; [subscription.ts](src/lib/subscription.ts) `requirePaidUser` is a separate reader (used by the billed API routes) that the middleware doesn't share. They can drift in interpretation (e.g. handling of `past_due`). The webhook also collapses all Stripe statuses to just `active`/`inactive` ([webhook:105](src/app/api/stripe/webhook/route.ts#L105)), discarding `past_due`/`trialing`/`canceled` nuance. **[Medium]**
 
 ### Low Risk
-8. **Unused data model:** `templates` (seeded but unread), `scheduled_follow_ups`, `activity_logs`. **[High]**
-9. **Repo artifacts** (`ruvector.db`, `tsconfig.tsbuildinfo`, `.venv/`) present in tree. **[Medium]** (verify `.gitignore`).
-10. **Split send responsibility** — the `send` route now sends, persists the outbound message, and marks the thread replied; `approveGeneration` separately marks the generation sent + triggers learning. Two writers touch the same thread/generation lifecycle. Minor coupling. **[Medium]**
+7. **Unused data model:** `templates` (seeded but unread), `scheduled_follow_ups`, `activity_logs`. **[High]**
+8. **Repo artifacts** (`ruvector.db`, `tsconfig.tsbuildinfo`, `.venv/`) present in tree. **[Medium]** (verify `.gitignore`).
+9. **Split send responsibility** — the `send` route now sends, persists the outbound message, and marks the thread replied; `approveGeneration` separately marks the generation sent + triggers learning. Two writers touch the same thread/generation lifecycle. Minor coupling. **[Medium]**
+10. **Non-functional contact form.** [contact/page.tsx](src/app/contact/page.tsx) renders inputs but its `onSubmit` only `preventDefault()`s — it sends nothing. Real contact is via the mailto links. **[Low]**
+11. **Legacy plaintext tokens never proactively migrated.** `decryptToken` tolerates pre-encryption rows and they're only re-encrypted opportunistically on the next Gmail re-connect ([token-crypto.ts:37-43](src/lib/token-crypto.ts#L37-L43)) — an account that never re-connects keeps its token in plaintext indefinitely. **[Low]** (No backfill script exists.)
 
 ---
 
@@ -884,6 +1002,8 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 - **Supabase RLS** and why app code does *not* (need to) filter by user.
 - **Retrieval-augmented personalization** (embed → kNN → inject), no fine-tuning.
 - **Two separate OAuth systems** (Supabase identity vs Gmail access).
+- **Three access layers:** RLS (data), middleware auth guard, and the middleware **subscription gate** (`profiles.subscription_status`).
+- **Stripe billing split:** synchronous Checkout creation vs asynchronous webhook activation; the webhook is the *only* code that writes subscription state, and the *only* code using the service-role key.
 - This is **Next.js 16**; per [AGENTS.md](AGENTS.md), read `node_modules/next/dist/docs/` before touching routing/middleware rather than relying on older-version memory.
 
 ### Most critical parts
@@ -894,8 +1014,11 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 - The **embedding dimension contract** (768) — tied to SQL `vector(768)` + IVFFlat; changing models needs a coordinated migration.
 - The **CRLF header check** in `gmail/send`.
 - The **HTML cleaners** (several near-duplicate copies — change one, the others drift).
-- **Middleware route lists** (now correct; keep them in sync with the actual pages when you add a route).
+- **Middleware route lists** (now correct; keep them in sync with the actual pages when you add a route — and remember new app pages need adding to `protectedRoutes` to be both auth- and subscription-gated).
 - The **per-thread `gmail_history_id` skip** in sync — if you change how/when it's written, you can silently stop ingesting updates to existing threads.
+- The **`GMAIL_TOKEN_ENCRYPTION_KEY`** — rotating or losing it makes every stored Gmail token undecryptable (users must re-connect). Never expose it client-side.
+- The **Stripe webhook signature check / `STRIPE_WEBHOOK_SECRET`** — without it the service-role webhook would accept forged events and could activate arbitrary accounts.
+- The **`metadata.supabase_uid`** passed through Checkout — it's how the webhook maps a Stripe customer back to a Supabase user; drop it and activation falls back to the fragile customer-id lookup.
 
 ### Suggested first tasks (to learn safely)
 - Read-only: trace one generate→send cycle with logging.
@@ -915,6 +1038,10 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 - **Sync** — pulling recent Gmail Primary threads into the DB; **incremental** (skips threads whose `gmail_history_id` is unchanged) and **bounded-parallel** (`mapPool`, 4 at a time).
 - **Auto-archive** — marking threads `archived` when they leave the Primary set within the 14-day window.
 - **`gmail_history_id`** — Gmail's per-thread change marker, stored on `email_threads` so a re-sync can skip unchanged threads.
+- **Subscription gate / paywall** — middleware redirect of logged-in, non-`active` users to `/subscribe`; page-level only.
+- **Checkout session** — a Stripe-hosted payment page created by `/api/stripe/checkout`.
+- **Stripe webhook** — server-to-server callback that records subscription state into `profiles`; signature-verified, service-role.
+- **Turnstile** — Cloudflare captcha on login/signup, verified by Supabase Auth.
 
 ### Components
 - **UserProvider / useUser** — global auth context.
@@ -928,14 +1055,17 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 - **Route Handler** — HTTP endpoint under [api/](src/app/api/).
 - **style-memory.ts** — the personalization engine.
 - **usage-limits.ts** — daily cost guard.
+- **subscription.ts** — reads `profiles.subscription_status` (helper; not used by the middleware gate).
+- **token-crypto.ts** — AES-256-GCM encrypt/decrypt of the Gmail refresh token (`enc:v1:` format).
 - **enforceDailyLimit / increment_usage** — soft per-user daily cap (fail-open) + its atomic Postgres function.
 
 ### Database entities
+- **profiles** — per-user subscription state (Stripe ids, status, period end); service-role-written.
 - **gym_settings, contacts, email_threads, email_messages, ai_generations** — core.
 - **style_samples, style_profile, style_feedback** — style learning.
 - **usage_counters** — daily caps.
 - **templates, scheduled_follow_ups, activity_logs** — defined but unused by app code.
-- **match_style_samples / apply_style_feedback / increment_usage** — RPC functions.
+- **match_style_samples / apply_style_feedback / increment_usage** — RPC functions; **handle_new_user** — trigger that auto-creates a `profiles` row.
 
 ### Internal terminology / config
 - **RLS (Row-Level Security)** — Postgres policies enforcing `auth.uid() = user_id`; the app's authorization boundary.
@@ -950,8 +1080,8 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 ---
 
 ## Confidence & Limitations Summary
-- **High confidence:** folder/route structure (incl. the inbox component split), data model (incl. `gmail_history_id`), RLS-as-authz, the generate/sync/send flows, the single corrected middleware, feedback-weighted style retrieval, and the style-sample list/delete endpoint — all read directly from the current source.
-- **Medium confidence:** real-world frequency of the "generation:null skips learning" issue (depends on pre-existing generation rows); exact caching behaviour of Next 16 RSC; secret-file contents (`.env.local.example` not read in full); `connection()` intent.
-- **Could not be determined from the codebase:** production env-var values; whether the SQL files have actually been applied to the live DB (they are manual); runtime performance numbers; whether `templates`/`scheduled_follow_ups`/`activity_logs` are used by anything outside this repo.
+- **High confidence:** folder/route structure (incl. the inbox component split and the new `subscribe`/`stripe` routes), data model (incl. `gmail_history_id` and `profiles`), RLS-as-authz + the single service-role exception, the generate/sync/send flows, the Stripe checkout/webhook flow, the subscription gate in middleware (and that it does **not** cover `/api/*`), Gmail token encryption, Turnstile on auth — all read directly from the current source.
+- **Medium confidence:** real-world frequency of the "generation:null skips learning" issue; exact caching behaviour of Next 16 RSC; `connection()` intent; the precise Stripe API version pinned by `stripe@^22`; the practical likelihood of the checkout↔webhook activation race.
+- **Could not be determined from the codebase:** production env-var values (`.env.local`/`.env.local.example` are outside the readable path); whether the SQL files (incl. the `profiles` table + trigger) have actually been applied to the live DB (they are manual); whether the live Supabase project has Turnstile captcha actually enabled (the app only supplies the token); runtime performance numbers; whether `templates`/`scheduled_follow_ups`/`activity_logs` are used by anything outside this repo.
 
 *End of document.*

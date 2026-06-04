@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { createClient } from "@/lib/supabase/server";
+import { requirePaidUser } from "@/lib/subscription";
 import { decryptToken } from "@/lib/token-crypto";
 import type { gmail_v1 } from "googleapis";
 
@@ -155,10 +156,9 @@ async function mapPool<T, R>(
 export async function POST() {
   try {
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requirePaidUser(supabase);
+    if (!auth.ok) return auth.res;
+    const user = auth.user;
 
     if (
       !process.env.GOOGLE_CLIENT_ID ||

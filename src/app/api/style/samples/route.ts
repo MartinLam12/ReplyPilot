@@ -7,12 +7,13 @@
  */
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requirePaidUser } from "@/lib/subscription";
 import { updateStyleProfile } from "@/lib/style-memory";
 
 export async function GET() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requirePaidUser(supabase);
+  if (!auth.ok) return auth.res;
 
   const { data, error } = await supabase
     .from("style_samples")
@@ -26,8 +27,9 @@ export async function GET() {
 
 export async function DELETE(request: Request) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requirePaidUser(supabase);
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
 
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });

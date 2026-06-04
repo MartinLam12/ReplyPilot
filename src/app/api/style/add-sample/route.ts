@@ -11,13 +11,15 @@
  */
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requirePaidUser } from "@/lib/subscription";
 import { addStyleSample, updateStyleProfile } from "@/lib/style-memory";
 import { enforceDailyLimit } from "@/lib/usage-limits";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requirePaidUser(supabase);
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
 
   const body = await request.json().catch(() => null);
   const emailBody = body?.body?.trim();

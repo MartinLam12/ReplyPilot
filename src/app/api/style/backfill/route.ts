@@ -12,14 +12,22 @@
  */
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requirePaidUser } from "@/lib/subscription";
 import { addStyleSample, updateStyleProfile } from "@/lib/style-memory";
+import { enforceDailyLimit } from "@/lib/usage-limits";
 
 const BATCH_SIZE = 20;
 
 export async function POST() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requirePaidUser(supabase);
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
+
+  const limit = await enforceDailyLimit(supabase, "add_sample");
+  if (!limit.allowed) {
+    return NextResponse.json({ error: limit.message }, { status: 429 });
+  }
 
   // Fetch already-processed message ids in a separate round-trip rather than
   // embedding a raw SQL subquery in the filter (which would bypass PostgREST
