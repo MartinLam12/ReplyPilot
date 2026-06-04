@@ -4,7 +4,7 @@
 > **Scope:** Documents the system *as it currently exists*. No improvements are suggested.
 > **Method:** Every non-obvious claim cites the file(s) it came from. Confidence is labelled **[High]**, **[Medium]**, or **[Low]**. Where something cannot be determined from the code, it says so explicitly.
 > **Generated from:** a full read of `src/`, `supabase/`, root config, and the build manifest.
-> **Last revised:** 2026-06-04, after the **Stripe subscription / billing** change set. This revision adds the payments subsystem (Stripe Checkout + webhook), **subscription gating in middleware**, the new `profiles` table and its auto-create trigger, **AES-256-GCM encryption of Gmail refresh tokens at rest** (`token-crypto.ts`), **Cloudflare Turnstile** captcha on login/signup, and the **first use of the Supabase service-role key** (in the Stripe webhook). The earlier 2026-06-02 baseline (inbox component split, incremental Gmail sync, feedback-weighted style retrieval, style-example management, single middleware, dep pruning) is retained and still accurate.
+> **Last revised:** 2026-06-04, after the **Stripe subscription / billing** change set. A subsequent security review (OWASP A10 — SSRF) corrected the `sanitize`/`applyCids` pipeline order in the Gmail sync route, added a UUID-format guard on `session.metadata.supabase_uid` in the Stripe webhook, and replaced the `NEXT_PUBLIC_APP_URL` localhost fallback in checkout with a fast-fail 500. This revision adds the payments subsystem (Stripe Checkout + webhook), **subscription gating in middleware**, the new `profiles` table and its auto-create trigger, **AES-256-GCM encryption of Gmail refresh tokens at rest** (`token-crypto.ts`), **Cloudflare Turnstile** captcha on login/signup, and the **first use of the Supabase service-role key** (in the Stripe webhook). The earlier 2026-06-02 baseline (inbox component split, incremental Gmail sync, feedback-weighted style retrieval, style-example management, single middleware, dep pruning) is retained and still accurate.
 
 ---
 
@@ -313,7 +313,7 @@ This traces a fresh page load (e.g. a logged-out user visiting `/inbox`). **[Hig
    - **Stripe:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PRICE_ID`.
    - **Token encryption:** `GMAIL_TOKEN_ENCRYPTION_KEY` (32-byte hex; required by [token-crypto.ts](src/lib/token-crypto.ts#L8-L23) whenever a Gmail token is read/written).
    - **Captcha:** `NEXT_PUBLIC_TURNSTILE_SITE_KEY`.
-   - **App URL:** `NEXT_PUBLIC_APP_URL` (Checkout success/cancel URLs + Gmail auth; falls back to `http://localhost:3000`).
+   - **App URL:** `NEXT_PUBLIC_APP_URL` (Checkout success/cancel URLs + Gmail auth; **required** — checkout returns 500 if absent; no localhost fallback).
    - `NODE_ENV` (dev-only CSP `'unsafe-eval'`, secure-cookie toggle).
 
 4. **Root layout renders.** [src/app/layout.tsx](src/app/layout.tsx) is an async server component. It calls `await connection()` ([layout.tsx:17](src/app/layout.tsx#L17)) — a Next.js API that opts the render into dynamic/request-time rendering. **[Medium]** (purpose: ensure per-request behaviour, likely so the nonce/session are fresh). It injects Google Fonts and renders `<ClientLayout>`.
@@ -358,7 +358,7 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
   1. `getUser` guard; verify Google env vars; read `gmail_refresh_token` from `gym_settings`.
   2. Build OAuth client; `gmail.users.threads.list` with `maxResults:200`, `labelIds:["INBOX"]`, `q:"newer_than:14d category:primary"`.
   3. **Incremental partition:** load each known thread's stored `gmail_history_id` in one query; a listed thread whose `historyId` is unchanged since last sync is **skipped** (no `threads.get`). Only new/changed threads go into `toFetch`.
-  4. **Parallel full fetch:** `mapPool(toFetch, 4, …)` fetches up to 4 threads concurrently; each task is wrapped in its own try/catch so a bad thread is recorded in `dropped[]` rather than crashing the run. Per thread: `threads.get(format:"full")` → `walk()` the MIME tree to extract best HTML/plain + inline CID images → `applyCids` → `sanitize` (strip script/handlers/js:/data: URLs).
+  4. **Parallel full fetch:** `mapPool(toFetch, 4, …)` fetches up to 4 threads concurrently; each task is wrapped in its own try/catch so a bad thread is recorded in `dropped[]` rather than crashing the run. Per thread: `threads.get(format:"full")` → `walk()` the MIME tree to extract best HTML/plain + inline CID images → `sanitize` (strip script/handlers/js:/data: URLs from the untrusted HTML first) → `applyCids` (inject trusted CID data-URIs so they survive the sanitizer).
   5. Identify sender, `upsert` contact, `upsert` thread (now storing `gmail_history_id`), then **one batched upsert** of all message rows for the thread (HTML capped 200k chars, plain 10k).
   6. **Auto-archive:** threads within the 14-day window whose `gmail_thread_id` is *not* in the current Primary set get `status:"archived"`.
   7. Update `gmail_last_synced_at`; return `{ synced, skipped, archived, gmailThreadCount, resultSizeEstimate, dropped }`.
@@ -403,7 +403,7 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 ### Journey K — Subscribe (paywall) *(gates all app access)*
 1. A logged-in but un-subscribed user hits any protected page; middleware redirects them to `/subscribe` ([middleware.ts:96-114](middleware.ts#L96-L114)).
 2. [subscribe/page.tsx](src/app/subscribe/page.tsx) shows the plan and a "Subscribe" button → `POST /api/stripe/checkout`.
-3. [stripe/checkout/route.ts](src/app/api/stripe/checkout/route.ts): `getUser` (401 if absent); reads `NEXT_PUBLIC_STRIPE_PRICE_ID` (500 if unset); finds-or-creates a Stripe **Customer** (storing `stripe_customer_id` on `profiles` so repeat checkouts reuse it); creates a `mode:"subscription"` Checkout Session with `success_url=/dashboard`, `cancel_url=/subscribe`, and `metadata.supabase_uid = user.id`; returns `{ url }`.
+3. [stripe/checkout/route.ts](src/app/api/stripe/checkout/route.ts): `getUser` (401 if absent); reads `NEXT_PUBLIC_STRIPE_PRICE_ID` (500 if unset); reads `NEXT_PUBLIC_APP_URL` (**500 if absent** — no localhost fallback); finds-or-creates a Stripe **Customer** (storing `stripe_customer_id` on `profiles` so repeat checkouts reuse it); creates a `mode:"subscription"` Checkout Session with `success_url=/dashboard`, `cancel_url=/subscribe`, and `metadata.supabase_uid = user.id`; returns `{ url }`.
 4. Client does `window.location.href = url` → Stripe-hosted checkout. On success Stripe redirects to `/dashboard`.
 5. **Asynchronously**, Stripe calls [stripe/webhook/route.ts](src/app/api/stripe/webhook/route.ts) (see Journey L). The `/dashboard` redirect and the activation are decoupled — if the webhook hasn't landed yet, middleware may briefly bounce the user back to `/subscribe` until `subscription_status` flips to `active`. **[Medium]**
 
@@ -412,7 +412,7 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 - **Handler:** [stripe/webhook/route.ts](src/app/api/stripe/webhook/route.ts):
   1. Reads the raw body + `stripe-signature`; **verifies the signature** with `STRIPE_WEBHOOK_SECRET` (400 on failure) — this is what authenticates the caller in lieu of a session.
   2. Builds a **service-role** Supabase client (bypasses RLS).
-  3. `checkout.session.completed` → retrieve the subscription, compute `current_period_end`, and set `subscription_status='active'` + ids on `profiles`. **Primary key path is `session.metadata.supabase_uid`**; a fallback matches by `stripe_customer_id` (with a zero-row `count` check) and logs loudly if neither works.
+  3. `checkout.session.completed` → retrieve the subscription, compute `current_period_end`, and set `subscription_status='active'` + ids on `profiles`. **Primary key path is `session.metadata.supabase_uid`** — validated against a UUID regex before use (non-UUID values fall through to the fallback); fallback matches by `stripe_customer_id` (with a zero-row `count` check) and logs loudly if neither works.
   4. `customer.subscription.updated` → set status `active`/`inactive` by `subscription_id`.
   5. `customer.subscription.deleted` → set `inactive`.
   - **Note:** the handler currently emits verbose `console.log`/`warn` debug lines (added while debugging activation) — see §18.
@@ -517,7 +517,7 @@ The backend = **Server Actions** + **Route Handlers** + **domain library** + **P
 | `/api/style/samples` | GET | — | `{samples[]}` | unauth 401 | `style_samples` (RLS-scoped) |
 | `/api/style/samples` | DELETE | `?id` | `{ok,sampleCount}` | unauth 401; missing-id 400 | `style_samples`, `updateStyleProfile` |
 | `/api/style/status` | GET | — | `{sampleCount,toneScore,avgWordCount,updatedAt}` | unauth 401 | `style_profile` |
-| `/api/stripe/checkout` | POST | — | `{url}` (Checkout session) | unauth 401; missing price 500 | Stripe, `profiles` (read+write `stripe_customer_id`) |
+| `/api/stripe/checkout` | POST | — | `{url}` (Checkout session) | unauth 401; missing price 500; missing `NEXT_PUBLIC_APP_URL` 500 | Stripe, `profiles` (read+write `stripe_customer_id`) |
 | `/api/stripe/webhook` | POST | raw Stripe event + `stripe-signature` | `{received:true}` | **signature verify** 400; handler error 500 | Stripe, `profiles` via **service-role** client |
 | `/auth/callback` | GET | `?code`,`?next` | 302 | exchange error → `/login?error` | Supabase Auth |
 
@@ -846,7 +846,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 [API] auth → env check → read refresh token
    → threads.list(q:"newer_than:14d category:primary", max 200)
    → load known gmail_history_id per thread; skip unchanged threads
-   → mapPool(changed, 4): threads.get(full) → walk() MIME → applyCids → sanitize
+   → mapPool(changed, 4): threads.get(full) → walk() MIME → sanitize → applyCids
         → upsert contact → upsert email_threads(+gmail_history_id) → batched upsert email_messages
    → auto-archive threads not in current Primary set (14d window)
    → update gym_settings.gmail_last_synced_at
@@ -920,7 +920,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 - All sensitive endpoints require auth; AI endpoints have **daily caps** (fail-open) as a cost guard.
 - **Stripe webhook** authenticated by HMAC signature verification (`STRIPE_WEBHOOK_SECRET`); rejects unsigned/forged events with 400 before any DB write.
 - **Gmail OAuth callback** is CSRF-protected by a `state` cookie matched against the returned `state` param.
-- Untrusted email HTML: sanitized (script/handler/`javascript:`/`data:` stripped) at sync, then rendered in a **sandboxed iframe without `allow-same-origin`** — the real containment ([inbox/components/EmailHtmlFrame.tsx](src/app/inbox/components/EmailHtmlFrame.tsx), [sync:108-117](src/app/api/gmail/sync/route.ts#L108-L117)).
+- Untrusted email HTML: **`sanitize` runs first** (strips script/handlers/`javascript:`/`data:` URIs from attacker-supplied content), then **`applyCids`** injects the legitimate CID-sourced data-URIs for inline images — this order ensures the sanitizer cannot strip CID-resolved images while still blocking attacker-supplied `data:` payloads. Final HTML is rendered in a **sandboxed iframe without `allow-same-origin`** — the real containment ([inbox/components/EmailHtmlFrame.tsx](src/app/inbox/components/EmailHtmlFrame.tsx), [sync:108-117](src/app/api/gmail/sync/route.ts#L108-L117)).
 - **CSP with per-request nonce + `strict-dynamic`** ([middleware.ts:7-18](middleware.ts#L7-L18)); plus `X-Frame-Options:DENY`, `X-Content-Type-Options:nosniff`, `Referrer-Policy`, `Permissions-Policy` ([next.config.ts](next.config.ts)).
 
 ### Secret management

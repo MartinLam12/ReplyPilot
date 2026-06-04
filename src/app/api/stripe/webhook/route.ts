@@ -66,8 +66,9 @@ export async function POST(request: NextRequest) {
 
         // Primary path: read uid from session metadata (set in checkout route).
         const uid = session.metadata?.supabase_uid;
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-        if (uid) {
+        if (uid && UUID_RE.test(uid)) {
           const { error, count } = await supabase
             .from("profiles")
             .update({

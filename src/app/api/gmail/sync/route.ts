@@ -102,7 +102,8 @@ function applyCids(html: string, cids: Map<string, string>): string {
   let out = html;
   for (const [cid, dataUri] of cids) {
     const escaped = cid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    out = out.replace(new RegExp(`cid:${escaped}`, "gi"), dataUri);
+    const safeUri = dataUri.replace(/\$/g, "$$$$");
+    out = out.replace(new RegExp(`cid:${escaped}`, "gi"), safeUri);
   }
   return out;
 }
@@ -320,7 +321,7 @@ export async function POST() {
 
           let bodyText: string;
           if (acc.html) {
-            bodyText = sanitize(applyCids(acc.html, acc.cids)).slice(0, 200_000);
+            bodyText = applyCids(sanitize(acc.html), acc.cids).slice(0, 200_000);
           } else {
             bodyText = (acc.plain ?? "").slice(0, 10_000);
           }

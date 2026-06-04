@@ -44,7 +44,10 @@ export async function POST() {
       .eq("id", user.id);
   }
 
-  const origin = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const origin = process.env.NEXT_PUBLIC_APP_URL;
+  if (!origin) {
+    return NextResponse.json({ error: "Service misconfigured" }, { status: 500 });
+  }
 
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
