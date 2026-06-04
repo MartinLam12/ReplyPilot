@@ -4,14 +4,12 @@ import { createClient } from "@supabase/supabase-js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
-// Service role client — only for writing subscription status from webhook.
 function createServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-// In Stripe SDK v22+ current_period_end moved from Subscription to SubscriptionItem.
 function getPeriodEnd(subscription: Stripe.Subscription): string | null {
   const item = subscription.items?.data?.[0];
   if (!item?.current_period_end) return null;
@@ -54,7 +52,31 @@ export async function POST(request: NextRequest) {
         });
         const periodEnd = getPeriodEnd(subscription);
 
-        console.log("[webhook] checkout.session.completed: attempting update by stripe_customer_id", { customerId, subscriptionId });
+        // Primary path: read uid from session metadata (set in checkout route).
+        const uid = session.metadata?.supabase_uid;
+
+        if (uid) {
+          console.log("[webhook] checkout.session.completed: updating by uid from session metadata", { uid, customerId, subscriptionId });
+          const { error } = await supabase
+            .from("profiles")
+            .update({
+              stripe_customer_id: customerId,
+              subscription_id: subscriptionId,
+              subscription_status: "active",
+              current_period_end: periodEnd,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", uid);
+          if (error) {
+            console.error("[webhook] checkout.session.completed update failed:", error);
+          } else {
+            console.log("[webhook] checkout.session.completed: activated uid", uid);
+          }
+          break;
+        }
+
+        // Fallback: try existing stripe_customer_id on profiles.
+        console.warn("[webhook] no supabase_uid in session metadata, falling back to stripe_customer_id lookup", { customerId });
         const { error, count } = await supabase
           .from("profiles")
           .update({
@@ -65,40 +87,11 @@ export async function POST(request: NextRequest) {
             updated_at: new Date().toISOString(),
           }, { count: "exact" })
           .eq("stripe_customer_id", customerId);
-        console.log("[webhook] checkout.session.completed: update-by-customerId result", { customerId, subscriptionId, error: error ?? null, count });
 
         if (error || !count) {
-          // stripe_customer_id may not be set yet on first checkout —
-          // fall back to supabase uid stored in customer metadata.
-          const customer = await stripe.customers.retrieve(customerId);
-          if (customer.deleted) {
-            console.error("[webhook] customer deleted:", customerId);
-            break;
-          }
-          const uid = (customer as Stripe.Customer).metadata?.supabase_uid;
-          if (!uid) {
-            console.error("[webhook] no supabase_uid on customer:", customerId);
-            break;
-          }
-          console.log("[webhook] checkout.session.completed: attempting fallback update by uid", { customerId, subscriptionId, uid });
-          const { error: err2 } = await supabase
-            .from("profiles")
-            .update({
-              stripe_customer_id: customerId,
-              subscription_id: subscriptionId,
-              subscription_status: "active",
-              current_period_end: periodEnd,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", uid);
-          console.log("[webhook] checkout.session.completed: fallback update-by-uid result", { customerId, subscriptionId, uid, error: err2 ?? null });
-          if (err2) {
-            console.error("[webhook] checkout.session.completed update failed:", err2);
-          } else {
-            console.log("[webhook] checkout.session.completed: activated uid", uid);
-          }
+          console.error("[webhook] fallback lookup also failed — user not activated", { customerId, error });
         } else {
-          console.log("[webhook] checkout.session.completed: activated customer", customerId);
+          console.log("[webhook] checkout.session.completed: activated via fallback", customerId);
         }
         break;
       }

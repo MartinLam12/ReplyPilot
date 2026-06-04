@@ -22,7 +22,6 @@ export async function POST() {
     );
   }
 
-  // Retrieve existing stripe_customer_id if present.
   const { data: profile } = await supabase
     .from("profiles")
     .select("stripe_customer_id")
@@ -37,6 +36,12 @@ export async function POST() {
       metadata: { supabase_uid: user.id },
     });
     customerId = customer.id;
+
+    // Persist immediately so repeat checkouts reuse the same customer.
+    await supabase
+      .from("profiles")
+      .update({ stripe_customer_id: customerId })
+      .eq("id", user.id);
   }
 
   const origin = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
@@ -47,6 +52,8 @@ export async function POST() {
     line_items: [{ price: priceId, quantity: 1 }],
     success_url: `${origin}/dashboard`,
     cancel_url: `${origin}/subscribe`,
+    // Pass uid on the session so the webhook has it without a customer lookup.
+    metadata: { supabase_uid: user.id },
   });
 
   return NextResponse.json({ url: session.url });
