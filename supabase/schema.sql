@@ -192,6 +192,10 @@ create policy "users read own profile"
   using (auth.uid() = id);
 -- Inserts and updates are done via service role in the webhook handler only.
 
+create unique index if not exists profiles_stripe_customer_id_key
+  on profiles (stripe_customer_id)
+  where stripe_customer_id is not null;
+
 -- Auto-create a profile row when a new user signs up.
 create or replace function handle_new_user()
 returns trigger language plpgsql security definer as $$

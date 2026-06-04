@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+const stripeKey = process.env.STRIPE_SECRET_KEY;
+if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not configured");
+const stripe = new Stripe(stripeKey);
 
 function createServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -17,6 +19,12 @@ function getPeriodEnd(subscription: Stripe.Subscription): string | null {
 }
 
 export async function POST(request: NextRequest) {
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    console.error("[webhook] STRIPE_WEBHOOK_SECRET is not configured");
+    return NextResponse.json({ error: "Service misconfigured" }, { status: 500 });
+  }
+
   const body = await request.text();
   const sig = request.headers.get("stripe-signature");
 
@@ -29,7 +37,7 @@ export async function POST(request: NextRequest) {
     event = stripe.webhooks.constructEvent(
       body,
       sig,
-      process.env.STRIPE_WEBHOOK_SECRET!
+      webhookSecret
     );
   } catch (err) {
     console.error("[webhook] signature verification failed:", err);
@@ -45,7 +53,11 @@ export async function POST(request: NextRequest) {
         if (session.mode !== "subscription") break;
 
         const customerId = session.customer as string;
-        const subscriptionId = session.subscription as string;
+        const subscriptionId = session.subscription as string | null;
+        if (!subscriptionId) {
+          console.error("[webhook] checkout.session.completed: null subscriptionId, skipping");
+          break;
+        }
 
         const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
           expand: ["items"],
@@ -57,7 +69,7 @@ export async function POST(request: NextRequest) {
 
         if (uid) {
           console.log("[webhook] checkout.session.completed: updating by uid from session metadata", { uid, customerId, subscriptionId });
-          const { error } = await supabase
+          const { error, count } = await supabase
             .from("profiles")
             .update({
               stripe_customer_id: customerId,
@@ -65,10 +77,10 @@ export async function POST(request: NextRequest) {
               subscription_status: "active",
               current_period_end: periodEnd,
               updated_at: new Date().toISOString(),
-            })
+            }, { count: "exact" })
             .eq("id", uid);
-          if (error) {
-            console.error("[webhook] checkout.session.completed update failed:", error);
+          if (error || !count) {
+            console.error("[webhook] checkout.session.completed update failed — user not activated", { uid, error, count });
           } else {
             console.log("[webhook] checkout.session.completed: activated uid", uid);
           }

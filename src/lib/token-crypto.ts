@@ -51,6 +51,9 @@ export function decryptToken(stored: string): string {
   const iv = Buffer.from(ivHex, "hex");
   const authTag = Buffer.from(authTagHex, "hex");
   const ciphertext = Buffer.from(ciphertextHex, "hex");
+  if (iv.length !== 12 || authTag.length !== 16) {
+    throw new Error("Malformed encrypted token: wrong IV or auth tag length");
+  }
   const decipher = createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");

@@ -926,7 +926,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 - **Two especially sensitive secrets** now exist: `SUPABASE_SERVICE_ROLE_KEY` (full DB access, RLS-bypassing — used only in the webhook) and `GMAIL_TOKEN_ENCRYPTION_KEY` (loss = inability to decrypt stored Gmail tokens; leak = the encryption is moot). Both must be server-only env vars (they are — no `NEXT_PUBLIC_` prefix).
 
 ### Data-at-rest encryption
-- **Gmail refresh token is now encrypted at rest** with AES-256-GCM ([token-crypto.ts](src/lib/token-crypto.ts)) before storage in `gym_settings.gmail_refresh_token`, replacing the previous plaintext storage. Authenticated encryption (GCM auth tag) also detects tampering. Legacy plaintext rows are tolerated (returned as-is) and re-encrypted on the next Gmail re-connect. **[High]** Residual exposure: a token is briefly plaintext in process memory whenever a Gmail call runs, and the encryption key sits in the same environment as the DB credentials.
+- **Gmail refresh token is now encrypted at rest** with AES-256-GCM ([token-crypto.ts](src/lib/token-crypto.ts)) before storage in `gym_settings.gmail_refresh_token`, replacing the previous plaintext storage. Authenticated encryption (GCM auth tag) also detects tampering. `decryptToken` now validates IV length (12 bytes) and GCM auth tag length (16 bytes) after hex-decoding the stored value, throwing on malformed tokens — preventing a truncated auth tag from weakening the forgery cost. Legacy plaintext rows are tolerated (returned as-is) and re-encrypted on the next Gmail re-connect. **[High]** Residual exposure: a token is briefly plaintext in process memory whenever a Gmail call runs, and the encryption key sits in the same environment as the DB credentials.
 
 ---
 
