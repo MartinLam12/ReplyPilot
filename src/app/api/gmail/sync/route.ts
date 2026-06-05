@@ -5,6 +5,8 @@ import { requirePaidUser } from "@/lib/subscription";
 import { decryptToken } from "@/lib/token-crypto";
 import type { gmail_v1 } from "googleapis";
 
+export const maxDuration = 60;
+
 // ─── MIME helpers ─────────────────────────────────────────────────────────────
 
 function decode(data: string): string {
@@ -359,7 +361,7 @@ export async function POST() {
     // query never looked at it, so we can't conclude it has left Primary.
     const syncedThreadIds = threads.map((t) => t.id).filter((id): id is string => !!id);
     let archived = 0;
-    if (syncedThreadIds.length) {
+    if (threads.length < 200 && syncedThreadIds.length) {
       // Reject any ID that is not a plain hex string (Gmail's documented format)
       // before interpolating into the PostgREST filter string.
       const safeIds = syncedThreadIds.filter((id) => /^[0-9a-f]+$/i.test(id));

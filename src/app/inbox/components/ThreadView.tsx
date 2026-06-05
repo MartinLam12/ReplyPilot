@@ -40,22 +40,28 @@ export function ThreadView({
     setDraftBody("");
     setGenerateError(null);
 
-    const res = await fetch("/api/ai/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threadId: thread.id, subject: thread.subject, messages }),
-    });
+    try {
+      const res = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId: thread.id, subject: thread.subject, messages }),
+      });
 
-    const data = await res.json().catch(() => null);
-    setGeneration(data?.generation ?? null);
-    setDraftBody(data?.body || "");
-    if (!res.ok || data?.error || !data?.body) {
-      setGenerateError(
-        (typeof data?.error === "string" && data.error) ||
-          `Failed to generate a draft (HTTP ${res.status}). Try again.`
-      );
+      const data = await res.json().catch(() => null);
+      // generation is a full AIGeneration object (or null when insert failed)
+      setGeneration(data?.generation ?? null);
+      setDraftBody(data?.body || "");
+      if (!res.ok || data?.error || !data?.body) {
+        setGenerateError(
+          (typeof data?.error === "string" && data.error) ||
+            `Failed to generate a draft (HTTP ${res.status}). Try again.`
+        );
+      }
+    } catch {
+      setGenerateError("Failed to reach the server. Check your connection.");
+    } finally {
+      setGenerating(false);
     }
-    setGenerating(false);
   };
 
   const handleSend = async () => {

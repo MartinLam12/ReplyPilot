@@ -39,11 +39,13 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
   children,
   className,
   disabled,
+  type = "button",
   ...props
 }: ButtonProps, ref) {
   return (
     <button
       ref={ref}
+      type={type}
       className={cn(
         "inline-flex items-center justify-center font-medium transition-all duration-200 cursor-pointer",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2",

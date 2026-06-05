@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { subject, messages } = await request.json() as {
+  const { threadId, subject, messages } = await request.json() as {
     threadId: string;
     subject: string;
     messages: EmailMessage[];
@@ -124,7 +124,15 @@ Return only the reply body text. Do not reproduce XML tags in your response.`;
     });
 
     const replyBody = stripFences(result.response.text() || "").trim();
-    return NextResponse.json({ generation: null, subject: `Re: ${cleanSubject}`, body: replyBody });
+    const { data: gen, error: insertError } = await supabase
+      .from("ai_generations")
+      .insert({ user_id: user.id, thread_id: threadId, type: "reply", generated_body: replyBody, status: "pending" })
+      .select("*")
+      .single();
+    if (insertError) {
+      console.error("[generate] insert failed", insertError.message);
+    }
+    return NextResponse.json({ generation: gen ?? null, subject: `Re: ${cleanSubject}`, body: replyBody });
   } catch (err) {
     console.error("[generate] LLM error:", err);
     return NextResponse.json(
