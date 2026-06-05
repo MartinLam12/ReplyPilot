@@ -110,12 +110,17 @@ function applyCids(html: string, cids: Map<string, string>): string {
   return out;
 }
 
-// Minimal sanitisation — strip scripts and JS handlers; keep all layout HTML/CSS.
-// The iframe sandbox already blocks script execution; this is defence-in-depth.
+// Strip executable/interactive elements and JS handlers; preserve all layout HTML/CSS.
+// Tables, images, inline styles, divs, spans, fonts — all passed through untouched.
+// The outer iframe sandbox blocks script execution; this is defence-in-depth only.
 function sanitize(html: string): string {
   return html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
-    .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, "")
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "")
+    .replace(/<embed\b[^>]*\/?>/gi, "")
+    .replace(/<form\b[^<]*(?:(?!<\/form>)<[^<]*)*<\/form>/gi, "")
+    .replace(/<input\b[^>]*\/?>/gi, "")
     .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/gi, "")
     .replace(/(href|src|action)\s*=\s*["']javascript:[^"']*["']/gi, '$1="#"')
     .replace(/(href|src|action)\s*=\s*["']data:[^"']*["']/gi, '$1="#"');
