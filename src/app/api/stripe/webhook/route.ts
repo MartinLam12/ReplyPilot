@@ -129,6 +129,21 @@ export async function POST(request: NextRequest) {
       case "customer.subscription.updated": {
         const subscription = event.data.object as Stripe.Subscription;
         const periodEnd = getPeriodEnd(subscription);
+
+        // Recency guard: skip if the stored period_end is already newer than this event,
+        // so a late-redelivered webhook cannot overwrite a more recent state.
+        const { data: stored } = await supabase
+          .from("profiles")
+          .select("current_period_end")
+          .eq("subscription_id", subscription.id)
+          .single();
+        if (stored?.current_period_end && periodEnd && stored.current_period_end >= periodEnd) {
+          console.log("[webhook] customer.subscription.updated: skipped — stored state is newer", {
+            stored: stored.current_period_end, incoming: periodEnd,
+          });
+          break;
+        }
+
         const { error } = await supabase
           .from("profiles")
           .update({

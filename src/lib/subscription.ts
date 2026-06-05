@@ -20,11 +20,16 @@ export async function requirePaidUser(
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("subscription_status")
+    .select("subscription_status, current_period_end")
     .eq("id", user.id)
     .single();
 
-  if (profile?.subscription_status !== "active") {
+  const now = new Date().toISOString();
+  if (
+    profile?.subscription_status !== "active" ||
+    !profile?.current_period_end ||
+    profile.current_period_end <= now
+  ) {
     console.warn("[auth] subscription gate rejected", { userId: user.id });
     return { ok: false, res: NextResponse.json({ error: "Subscription required" }, { status: 402 }) };
   }
