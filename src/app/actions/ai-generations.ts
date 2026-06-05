@@ -1,6 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { requirePaidUser } from "@/lib/subscription";
+import { enforceDailyLimit } from "@/lib/usage-limits";
 import { addStyleSample, updateStyleProfile } from "@/lib/style-memory";
 import { revalidatePath } from "next/cache";
 
@@ -10,8 +12,12 @@ export async function approveGeneration(
   generationId?: string | null
 ): Promise<void> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return;
+  const auth = await requirePaidUser(supabase);
+  if (!auth.ok) return;
+  const user = auth.user;
+
+  const limit = await enforceDailyLimit(supabase, "add_sample");
+  if (!limit.allowed) return;
 
   // Only update a generation row if one actually exists. Fresh drafts from
   // /api/ai/generate don't persist a row, so generationId is often null —
