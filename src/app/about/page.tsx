@@ -19,64 +19,65 @@ export default function AboutPage() {
 
         <div className="prose prose-surface max-w-none space-y-6 text-surface-700 leading-relaxed">
           <p>
-            ReplyPilot was built with one mission: help small businesses navigate
-            the AI landscape without the jargon, hype, or overwhelming complexity.
+            ReplyPilot is an AI-assisted email reply tool built specifically for
+            boxing and martial arts gym owners. It connects to your gym&apos;s Gmail,
+            pulls in your inbox threads, and lets you send professional, on-brand
+            replies with a single click.
           </p>
 
           <h2 className="text-xl font-semibold text-surface-900 mt-10">
-            Why We Exist
+            Why We Built It
           </h2>
           <p>
-            AI is transforming how businesses operate, but most resources are
-            built for enterprises with dedicated tech teams and six-figure
-            budgets. Small businesses deserve a clear, honest, and actionable
-            path to adopting AI — one that starts where they actually are, not
-            where a vendor wants them to be.
+            Gym owners spend hours every week fielding the same questions —
+            membership pricing, class schedules, trial offers. Every hour in the
+            inbox is an hour not spent on the gym floor coaching members. We built
+            ReplyPilot to give that time back.
           </p>
 
           <h2 className="text-xl font-semibold text-surface-900 mt-10">
-            What We Do
+            What It Does
           </h2>
           <p>
-            We guide small businesses through a structured assessment to
-            understand their operations, challenges, and goals. Then we generate
-            a tailored AI adoption report with prioritized recommendations,
-            estimated impact, implementation difficulty, and concrete next steps.
+            Connect your Gmail account and ReplyPilot syncs your inbox. When an
+            inquiry comes in, click &ldquo;Draft Reply&rdquo; and the AI writes a
+            professional response that follows the reply rules you set — your
+            pricing, your hours, your voice. Review it, tweak it if you like, and
+            send it straight from Gmail.
           </p>
           <p>
-            No generic advice. No one-size-fits-all playbooks. Every report is
-            built from your actual business context.
+            Over time, ReplyPilot learns your writing style from the feedback you
+            give, so drafts get closer and closer to how you actually sound.
           </p>
 
           <h2 className="text-xl font-semibold text-surface-900 mt-10">
-            Our Approach
+            Built For
           </h2>
           <ul className="list-disc pl-6 space-y-2">
             <li>
-              <strong>Practical over theoretical</strong> — We recommend tools
-              you can implement this week, not next year.
+              <strong>Boxing and martial arts gyms</strong> — the reply rules,
+              tone, and workflow are designed around how gym owners actually
+              communicate with leads and members.
             </li>
             <li>
-              <strong>Honest about limitations</strong> — Not every business
-              needs AI for everything. We tell you where it makes sense and where
-              it doesn&apos;t.
+              <strong>Owner-operators</strong> — no dedicated office staff, no
+              marketing team. Just you and your inbox.
             </li>
             <li>
-              <strong>Built for real businesses</strong> — We understand that
-              small businesses run on tight margins, small teams, and limited
-              time.
+              <strong>Multi-location gyms</strong> — manage emails across up to
+              two gym locations from one dashboard.
             </li>
           </ul>
 
           <div className="mt-12 p-6 bg-brand-50 rounded-xl border border-brand-100">
             <p className="text-brand-800 font-medium">
-              Ready to find your AI advantage?
+              Ready to stop losing members to unanswered emails?
             </p>
             <Link
-              href="/assessment"
+              href="/signup"
               className="inline-block mt-3 text-brand-600 font-semibold hover:text-brand-700 underline underline-offset-2"
             >
-              Take the free assessment →
+              Get started →
             </Link>
           </div>
         </div>

@@ -138,9 +138,7 @@ export async function POST(request: NextRequest) {
           .eq("subscription_id", subscription.id)
           .single();
         if (stored?.current_period_end && periodEnd && stored.current_period_end >= periodEnd) {
-          console.log("[webhook] customer.subscription.updated: skipped — stored state is newer", {
-            stored: stored.current_period_end, incoming: periodEnd,
-          });
+          console.log("[webhook] customer.subscription.updated: skipped — stored state is newer");
           break;
         }
 

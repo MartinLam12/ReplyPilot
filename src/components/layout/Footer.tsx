@@ -14,7 +14,7 @@ export function Footer() {
               <span className="text-lg font-bold text-white">ReplyPilot</span>
             </Link>
             <p className="text-sm text-surface-400 leading-relaxed">
-              Helping small businesses find their AI advantage. Practical recommendations, not hype.
+              AI-drafted email replies built for boxing and martial arts gym owners.
             </p>
           </div>
 
@@ -23,7 +23,7 @@ export function Footer() {
             <ul className="space-y-2.5">
               <li><a href="#features" className="text-sm text-surface-400 hover:text-white transition-colors">Features</a></li>
               <li><a href="#how-it-works" className="text-sm text-surface-400 hover:text-white transition-colors">How It Works</a></li>
-              <li><Link href="/assessment" className="text-sm text-surface-400 hover:text-white transition-colors">Take Assessment</Link></li>
+              <li><Link href="/signup" className="text-sm text-surface-400 hover:text-white transition-colors">Get Started</Link></li>
             </ul>
           </div>
 
@@ -49,7 +49,7 @@ export function Footer() {
             © 2026 ReplyPilot. All rights reserved.
           </p>
           <p className="text-sm text-surface-500">
-            Built for small businesses, by people who understand them.
+            Built for boxing gyms, by people who understand them.
           </p>
         </div>
       </div>

@@ -106,7 +106,10 @@ export async function middleware(request: NextRequest) {
       .eq("id", user.id)
       .single();
 
-    if (!profileError && profile?.subscription_status !== "active") {
+    const isCheckoutReturn =
+      pathname === "/dashboard" &&
+      request.nextUrl.searchParams.get("checkout") === "success";
+    if (!profileError && profile?.subscription_status !== "active" && !isCheckoutReturn) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = "/subscribe";
       const redirectResponse = NextResponse.redirect(redirectUrl);

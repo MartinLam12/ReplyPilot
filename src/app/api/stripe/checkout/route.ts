@@ -53,7 +53,7 @@ export async function POST() {
     customer: customerId,
     mode: "subscription",
     line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `${origin}/dashboard`,
+    success_url: `${origin}/dashboard?checkout=success`,
     cancel_url: `${origin}/subscribe`,
     // Pass uid on the session so the webhook has it without a customer lookup.
     metadata: { supabase_uid: user.id },

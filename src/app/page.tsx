@@ -53,11 +53,11 @@ function HeroSection() {
             <div className="flex items-center justify-center gap-6 mt-8 text-sm text-surface-500">
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-brand-500" />
-                Free to use
+                Set up in under 5 minutes
               </span>
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-brand-500" />
-                No credit card
+                Cancel any time
               </span>
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-brand-500" />
@@ -180,7 +180,7 @@ function CTASection() {
           <h2 className="text-3xl font-bold text-surface-900 mb-4">
             Ready to take back your time?
           </h2>
-          <p className="text-surface-500 mb-8">Set up in under 5 minutes. No credit card required.</p>
+          <p className="text-surface-500 mb-8">Set up in under 5 minutes. Cancel your subscription any time.</p>
           <Link href="/signup">
             <Button size="lg" icon={<Mail className="w-5 h-5" />}>
               Start Replying Smarter

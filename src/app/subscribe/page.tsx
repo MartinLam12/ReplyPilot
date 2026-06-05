@@ -48,7 +48,7 @@ export default function SubscribePage() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-brand-500 font-bold mt-0.5">✓</span>
-              Automated follow-up scheduling for leads and members
+              Custom reply rules — your pricing, hours, and policies built in
             </li>
             <li className="flex items-start gap-2">
               <span className="text-brand-500 font-bold mt-0.5">✓</span>
@@ -56,7 +56,7 @@ export default function SubscribePage() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-brand-500 font-bold mt-0.5">✓</span>
-              Unlimited drafts and replies every month
+              Daily AI reply drafts — enough for any active gym inbox
             </li>
           </ul>
 

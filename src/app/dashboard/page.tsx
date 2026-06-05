@@ -1,11 +1,55 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Card, Button, Badge } from "@/components/ui";
 import { listThreads } from "@/app/actions/threads";
 import { Mail, Users, ArrowRight, RefreshCw } from "lucide-react";
 import type { EmailThread } from "@/lib/types";
+
+function CheckoutPoller() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(
+    () => searchParams.get("checkout") === "success"
+  );
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("checkout") !== "success") return;
+
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/stripe/status");
+        if (!res.ok) return;
+        const { status } = await res.json();
+        if (status === "active") {
+          if (intervalRef.current) clearInterval(intervalRef.current);
+          setConfirming(false);
+          router.replace("/dashboard");
+        }
+      } catch {
+        // keep polling on transient errors
+      }
+    };
+
+    poll();
+    intervalRef.current = setInterval(poll, 3000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [searchParams, router]);
+
+  if (!confirming) return null;
+
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3">
+      <RefreshCw className="w-5 h-5 text-amber-600 animate-spin shrink-0" />
+      <p className="text-amber-800 font-medium text-sm">Confirming your subscription…</p>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const [threads, setThreads] = useState<EmailThread[]>([]);
@@ -27,6 +71,10 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold text-surface-900">Dashboard</h1>
         <p className="text-surface-500 mt-1">Here&apos;s what needs your attention today.</p>
       </div>
+
+      <Suspense fallback={null}>
+        <CheckoutPoller />
+      </Suspense>
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
