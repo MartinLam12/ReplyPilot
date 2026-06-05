@@ -4,7 +4,7 @@
 > **Scope:** Documents the system *as it currently exists*. No improvements are suggested.
 > **Method:** Every non-obvious claim cites the file(s) it came from. Confidence is labelled **[High]**, **[Medium]**, or **[Low]**. Where something cannot be determined from the code, it says so explicitly.
 > **Generated from:** a full read of `src/`, `supabase/`, root config, and the build manifest.
-> **Last revised:** 2026-06-04, after the **Stripe subscription / billing** change set. A subsequent security review (OWASP A10 — SSRF) corrected the `sanitize`/`applyCids` pipeline order in the Gmail sync route, added a UUID-format guard on `session.metadata.supabase_uid` in the Stripe webhook, and replaced the `NEXT_PUBLIC_APP_URL` localhost fallback in checkout with a fast-fail 500. This revision adds the payments subsystem (Stripe Checkout + webhook), **subscription gating in middleware**, the new `profiles` table and its auto-create trigger, **AES-256-GCM encryption of Gmail refresh tokens at rest** (`token-crypto.ts`), **Cloudflare Turnstile** captcha on login/signup, and the **first use of the Supabase service-role key** (in the Stripe webhook). The earlier 2026-06-02 baseline (inbox component split, incremental Gmail sync, feedback-weighted style retrieval, style-example management, single middleware, dep pruning) is retained and still accurate.
+> **Last revised:** 2026-06-04 (latest pass after commits `ad928cf` + `bffa773`): `/api/ai/generate` now **persists an `ai_generations` row and returns it** instead of `generation:null`, so the send-time style-learning loop actually fires (resolving the long-standing High-Risk debt item); `approveGeneration` is now **gated by `requirePaidUser` + `enforceDailyLimit("add_sample")`**; the Gmail sync route gained `maxDuration = 60` and a `<200` auto-archive guard; and `Button` now defaults to `type="button"`. The prior pass (through commit `8439e1c`) followed the **Stripe subscription / billing** change set. A subsequent security review (OWASP A10 — SSRF) corrected the `sanitize`/`applyCids` pipeline order in the Gmail sync route, added a UUID-format guard on `session.metadata.supabase_uid` in the Stripe webhook, and replaced the `NEXT_PUBLIC_APP_URL` localhost fallback in checkout with a fast-fail 500. This revision adds the payments subsystem (Stripe Checkout + webhook), **subscription gating in middleware**, the new `profiles` table and its auto-create trigger, **AES-256-GCM encryption of Gmail refresh tokens at rest** (`token-crypto.ts`), **Cloudflare Turnstile** captcha on login/signup, and the **first use of the Supabase service-role key** (in the Stripe webhook). The earlier 2026-06-02 baseline (inbox component split, incremental Gmail sync, feedback-weighted style retrieval, style-example management, single middleware, dep pruning) is retained and still accurate.
 
 ---
 
@@ -360,7 +360,7 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
   3. **Incremental partition:** load each known thread's stored `gmail_history_id` in one query; a listed thread whose `historyId` is unchanged since last sync is **skipped** (no `threads.get`). Only new/changed threads go into `toFetch`.
   4. **Parallel full fetch:** `mapPool(toFetch, 4, …)` fetches up to 4 threads concurrently; each task is wrapped in its own try/catch so a bad thread is recorded in `dropped[]` rather than crashing the run. Per thread: `threads.get(format:"full")` → `walk()` the MIME tree to extract best HTML/plain + inline CID images → `sanitize` (strip script/handlers/js:/data: URLs from the untrusted HTML first) → `applyCids` (inject trusted CID data-URIs so they survive the sanitizer).
   5. Identify sender, `upsert` contact, `upsert` thread (now storing `gmail_history_id`), then **one batched upsert** of all message rows for the thread (HTML capped 200k chars, plain 10k).
-  6. **Auto-archive:** threads within the 14-day window whose `gmail_thread_id` is *not* in the current Primary set get `status:"archived"`.
+  6. **Auto-archive:** threads within the 14-day window whose `gmail_thread_id` is *not* in the current Primary set get `status:"archived"` — but **skipped when the listing hit the 200-result cap** (a `threads.length < 200` guard added in commit `ad928cf`), since a truncated listing can't prove a thread actually left Primary. (The route also now sets `maxDuration = 60` for a larger serverless timeout budget, commit `ad928cf`.)
   7. Update `gmail_last_synced_at`; return `{ synced, skipped, archived, gmailThreadCount, resultSizeEstimate, dropped }`.
 - **DB:** writes to `contacts`, `email_threads`, `email_messages`, `gym_settings`.
 - **UI:** on success `loadThreads(pageSize)` refreshes the list; on error shows a dismissible banner.
@@ -374,8 +374,8 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
   3. Build `conversationContext` from the last 2 messages (each truncated to 180 chars) ([generate:59-64](src/app/api/ai/generate/route.ts#L59-L64)).
   4. `retrieveStyleContext(supabase, userId, inboundText)` — embeds inbound text, runs `match_style_samples` RPC (top-3 cosine), and reads `style_profile`; falls back to recent samples ([style-memory.ts:316-388](src/lib/style-memory.ts#L316-L388)).
   5. Build prompt: if style examples exist, tone rule = "match the examples"; else "friendly and warm, like a coach" ([generate:86-101](src/app/api/ai/generate/route.ts#L86-L101)). Constraints: under 100 words, one next step, no markdown/JSON.
-  6. `gemini-2.5-flash-lite`, `maxOutputTokens:160`, `temperature:0.4`; strip code fences; return `{ subject:"Re: …", body }` ([generate:103-119](src/app/api/ai/generate/route.ts#L103-L119)).
-- **UI:** `handleGenerate` reads the JSON response and fills the editable textarea. (The earlier dormant SSE-streaming branch was removed when the inbox was split into components; the route returns plain JSON, [generate:112](src/app/api/ai/generate/route.ts#L112).) **[High]**
+  6. `gemini-2.5-flash-lite`, `maxOutputTokens:160`, `temperature:0.4`; strip code fences; **insert an `ai_generations` row** (`type:"reply"`, `generated_body`, `status:"pending"`) and return `{ generation, subject:"Re: …", body }` — `generation` is the inserted row (or `null` if the insert errored) ([generate:124-138](src/app/api/ai/generate/route.ts#L124-L138)). *Changed in commit `ad928cf`: the route previously returned `generation:null`; it now persists the draft so the send-time style-learning loop can actually fire (see Journey F and §18).*
+- **UI:** `handleGenerate` reads the JSON response and fills the editable textarea; it is now wrapped in `try/catch/finally` (commit `ad928cf`) so a network failure surfaces an error rather than leaving the "Drafting…" spinner stuck. (The earlier dormant SSE-streaming branch was removed when the inbox was split into components; the route returns plain JSON.) **[High]**
 
 ### Journey F — Edit & send  *(core)*
 - **Action:** edit textarea, click "Send Reply". **Handler:** `handleSend` ([inbox/page.tsx:367-390](src/app/inbox/page.tsx#L367-L390)).
@@ -383,7 +383,7 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
   2. [gmail/send/route.ts](src/app/api/gmail/send/route.ts): `getUser`; **reject CR/LF in `to`/`subject`** to prevent header injection ([send:14-16](src/app/api/gmail/send/route.ts#L14-L16)); read refresh token; build raw RFC822 MIME; `gmail.users.messages.send({ raw, threadId })`. Then it **immediately persists the sent reply** as an `outbound` row in `email_messages` (keyed on the real Gmail message id, so the next sync dedupes against it), and marks the thread `replied` **and bumps `last_message_at`** to the send time so the conversation rises to the top — both mirroring Gmail without waiting for a sync.
   3. Then `approveGeneration(generation.id, draftBody, thread.id)` ([ai-generations.ts:7-35](src/app/actions/ai-generations.ts#L7-L35)): sets generation `sent` + thread `replied`, and **fire-and-forget** `addStyleSample` + `updateStyleProfile` (only if body > 20 chars).
 - **UI:** the sent reply appears in the thread immediately; shows "Reply sent" + the `StyleFeedback` widget.
-- **Note [Medium]:** `generation` is usually `null` because `/api/ai/generate` returns `generation:null`; so `approveGeneration` and the post-send style sample often **don't run** on a fresh draft. The reliable style-learning paths are manual add-sample and backfill. (The generation row is created elsewhere only if pre-existing on the thread via `getThreadDetail`.) See §18.
+- **Note (updated in commits `ad928cf` + `bffa773`):** `/api/ai/generate` now **inserts an `ai_generations` row and returns it**, so on a fresh draft `generation` is a real object (not `null`) and `approveGeneration`'s post-send `addStyleSample`/`updateStyleProfile` path now fires for the typical send — resolving the earlier "generation:null skips learning" gap (see §18). `approveGeneration` itself is now **gated**: it calls `requirePaidUser` (returns silently if unauth/unsubscribed) and `enforceDailyLimit("add_sample")` (returns silently if over cap) before touching the DB ([ai-generations.ts:14-21](src/app/actions/ai-generations.ts#L14-L21)), so send-time style learning happens only for paid users within their daily cap. (A generation row may also already exist on the thread via `getThreadDetail`.)
 
 ### Journey G — Rate the reply ("Sound like you?")
 - **Component:** `StyleFeedback` ([inbox/page.tsx:670-703](src/app/inbox/page.tsx#L670-L703)). Optimistically sets done, fires `POST /api/style/feedback` with `rating: "good" | "wrong_style"`.
@@ -476,7 +476,7 @@ Format: **User Action → UI Component → Handler → State → API/Action → 
 ### Design-system components (props summary)
 | Component | Key props | Notes |
 |---|---|---|
-| `Button` ([Button.tsx](src/components/ui/Button.tsx)) | `variant`(5), `size`(3), `loading`, `icon` | `forwardRef`; disables while loading; spinner SVG |
+| `Button` ([Button.tsx](src/components/ui/Button.tsx)) | `variant`(5), `size`(3), `loading`, `icon`, `type` | `forwardRef`; disables while loading; spinner SVG; **defaults `type="button"`** (commit `ad928cf`) so a Button inside a `<form>` no longer triggers a silent submit |
 | `Card` (+sub) ([Card.tsx](src/components/ui/Card.tsx)) | `padding`, `hover` | `CardTitle`/`CardDescription` used in Settings |
 | `Input`/`Textarea`/`Select` ([Input.tsx](src/components/ui/Input.tsx)) | `label`, `error`, `hint`, `options` | Auto-derives `id` from label |
 | `Badge` ([Badge.tsx](src/components/ui/Badge.tsx)) | `variant`(5), `size` | Status chips |
@@ -497,7 +497,7 @@ The backend = **Server Actions** + **Route Handlers** + **domain library** + **P
 | `listThreads(limit=50)` | limit | `EmailThread[]` (with contact join), excludes `archived`, ordered by `last_message_at` | returns `[]` if no user | [threads.ts:7-21](src/app/actions/threads.ts#L7-L21) |
 | `getThreadDetail(threadId)` | id | thread + messages + latest generation | user guard | second query fetches latest `ai_generations` ([threads.ts:23-47](src/app/actions/threads.ts#L23-L47)) |
 | `archiveThread(threadId)` | id | void | user guard | `revalidatePath("/inbox")` |
-| `approveGeneration(genId, finalBody, threadId)` | ids, body | void | user guard; body>20 for style | sets `sent`/`replied`; fire-and-forget style learning ([ai-generations.ts:7-35](src/app/actions/ai-generations.ts#L7-L35)) |
+| `approveGeneration(genId, finalBody, threadId)` | ids, body | void | **`requirePaidUser` + `enforceDailyLimit("add_sample")`** (returns silently if unauth/unsubscribed/over-cap — commit `bffa773`); body>20 for style | sets `sent`/`replied`; fire-and-forget style learning ([ai-generations.ts:11-21](src/app/actions/ai-generations.ts#L11-L21)) |
 | `rejectGeneration(genId)` | id | void | user guard | sets `rejected` |
 | `getGymSettings()` / `saveGymSettings(name, context)` / `disconnectGmail()` | — | settings / void | user guard; throws if unauth on writes | [gym-settings.ts](src/app/actions/gym-settings.ts) |
 | `listContacts(type?)` / `updateContactType(id,type)` / `upsertContact(email,name?,type?)` | — | `Contact[]` / void / `Contact` | user guard | [contacts.ts](src/app/actions/contacts.ts) |
@@ -510,7 +510,7 @@ The backend = **Server Actions** + **Route Handlers** + **domain library** + **P
 | `/api/gmail/callback` | GET | `?code`/`?error` | 302 → `/settings?...` | error/code check | Google, `gym_settings` |
 | `/api/gmail/sync` | POST | — | `{synced,skipped,archived,gmailThreadCount,resultSizeEstimate,dropped}` | unauth 401; env-var check 500; "Gmail not connected" 400 | Gmail, `contacts`/`email_threads`/`email_messages`/`gym_settings` |
 | `/api/gmail/send` | POST | `{threadId,gmailThreadId,to,subject,body}` | `{success:true}` | **CRLF check on to/subject**; unauth 401; not-connected 400 | Gmail, `email_threads` |
-| `/api/ai/generate` | POST | `{threadId,subject,messages}` | `{generation,subject,body}` | unauth 401; daily limit 429; LLM error 500 | Gemini, `gym_settings`, `style_*`, `usage_counters` |
+| `/api/ai/generate` | POST | `{threadId,subject,messages}` | `{generation,subject,body}` — `generation` is the inserted `ai_generations` row, not `null` (commit `ad928cf`) | unauth 401; daily limit 429; LLM error 500 | Gemini, `gym_settings`, `style_*`, `usage_counters`, **`ai_generations`** |
 | `/api/style/add-sample` | POST | `{body}` | `{ok,sampleCount}` | min 20 chars 400; limit 429; save fail 500 | Gemini embed, `style_samples`/`style_profile` |
 | `/api/style/backfill` | POST | — | `{processed,skipped,remaining}` | unauth 401; query fail 500 | `email_messages`→`style_samples` |
 | `/api/style/feedback` | POST | `{generationId,rating}` | `{ok:true}` | rating allowlist; ownership 404 | `style_feedback`, `apply_style_feedback` |
@@ -582,7 +582,7 @@ auth.users (Supabase-managed)
 | `contacts` | CRM of senders | contacts page, sync | `unique(user_id,email)`; type check; RLS all |
 | `email_threads` | Grouped Gmail conversations | inbox, dashboard, sync | `unique(user_id,gmail_thread_id)`; status check; **`gmail_history_id`** (lets sync skip unchanged threads); indexes on `(user_id,status)` and `(user_id,last_message_at desc)` |
 | `email_messages` | Individual messages (raw HTML/plain body) | thread detail, sync, backfill | `unique(gmail_message_id)`; FK thread cascade; **RLS via parent thread's user_id** (subquery policy) |
-| `ai_generations` | AI draft + outcome lifecycle | generations action, feedback | status/risk/type checks; FK thread cascade; RLS all |
+| `ai_generations` | AI draft + outcome lifecycle | **ai/generate route (inserts the draft row, commit `ad928cf`)**, generations action, feedback | status/risk/type checks; FK thread cascade; RLS all |
 | `templates` | Reusable email templates (5 system rows seeded) | — *(no app reads found)* | RLS: own + `is_system` readable |
 | `scheduled_follow_ups` | Planned follow-ups w/ QStash id | — *(Phase 2; unused)* | references templates/threads/contacts |
 | `activity_logs` | Audit log | — *(no writes found)* | RLS all |
@@ -599,7 +599,7 @@ auth.users (Supabase-managed)
 
 ### Data lifecycle
 - A sync creates/updates `contacts`, `email_threads`, `email_messages`; stale threads auto-archived.
-- Sending sets `email_threads.status='replied'` and (when a generation exists) `ai_generations.status='sent'`.
+- Generating a draft now inserts an `ai_generations` row (`status='pending'`, commit `ad928cf`); sending sets `email_threads.status='replied'` and (when a generation exists, now the typical case) `ai_generations.status='sent'`.
 - Style: outbound text → `style_samples` (+embedding) → recompute `style_profile`; feedback adjusts `weight`.
 - Usage: each billed call increments `usage_counters` for `(user, today, kind)`.
 - Subscription: signup → trigger creates `profiles(inactive)`; checkout creates/stores `stripe_customer_id`; webhook flips `subscription_status` (`active`/`inactive`) + `current_period_end`; middleware reads it on every protected request.
@@ -653,7 +653,7 @@ No global store, so navigating between Dashboard and Inbox **refetches** threads
 
 ### Authorization model
 - **Primary boundary = Postgres RLS.** Every table has `auth.uid() = user_id` policies (or, for `email_messages`, an EXISTS subquery on the parent thread). The anon-key client cannot read/write other users' rows. [AGENTS.md](AGENTS.md) states RLS is *the* ownership boundary and warns against redundant `.eq("user_id")` filters.
-- **Secondary checks:** every action/route calls `getUser()` and returns 401/empty if absent; the billed API routes (`/api/ai/generate`, `/api/gmail/*`, `/api/style/*`) go further and call `requirePaidUser(supabase)` ([subscription.ts](src/lib/subscription.ts)), which combines the `getUser()` check with an `active`-subscription check (401/402); feedback route additionally verifies generation ownership before acting ([feedback:30-39](src/app/api/style/feedback/route.ts#L30-L39)).
+- **Secondary checks:** every action/route calls `getUser()` and returns 401/empty if absent; the billed API routes (`/api/ai/generate`, `/api/gmail/*`, `/api/style/*`) go further and call `requirePaidUser(supabase)` ([subscription.ts](src/lib/subscription.ts)), which combines the `getUser()` check with an `active`-subscription check (401/402); the **`approveGeneration` server action is now likewise gated** with `requirePaidUser` + `enforceDailyLimit("add_sample")` (commit `bffa773`), returning silently when not entitled; feedback route additionally verifies generation ownership before acting ([feedback:30-39](src/app/api/style/feedback/route.ts#L30-L39)).
 
 ### Protected routes & subscription gate
 Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes`/`subscriptionExemptRoutes` lists ([middleware.ts:4-7](middleware.ts#L4-L7)). It guards all four app pages — `/dashboard`, `/inbox`, `/contacts`, `/settings` — redirecting anonymous visits to `/login` and bouncing logged-in users off `/login`/`/signup`. **On top of auth, it enforces billing:** a logged-in user with `profiles.subscription_status !== 'active'` visiting a protected page is redirected to `/subscribe` ([middleware.ts:96-114](middleware.ts#L96-L114)). `/subscribe` itself requires login but is subscription-exempt. The Stripe webhook is bypassed entirely (no session). RLS remains the actual *data* boundary; the middleware enforces *access* (auth + payment) and is UX/defence-in-depth for the former.
@@ -711,7 +711,7 @@ Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes`/`subs
 | 2 | **Gmail connection** | Settings → `/api/gmail/auth` | [gmail/auth](src/app/api/gmail/auth/route.ts), [callback](src/app/api/gmail/callback/route.ts) | `gym_settings` | Google OAuth | settings page |
 | 3 | **Gmail sync** | Inbox "Sync" | [gmail/sync](src/app/api/gmail/sync/route.ts) | `contacts`,`email_threads`,`email_messages`,`gym_settings` | Gmail API | InboxPage |
 | 4 | **Inbox reading** | `/inbox` | [inbox/page.tsx](src/app/inbox/page.tsx), [threads.ts](src/app/actions/threads.ts) | `email_threads`,`email_messages`,`contacts` | `listThreads`,`getThreadDetail` | ThreadView, MessageBubble, EmailHtmlFrame |
-| 5 | **AI reply generation** | "Suggest a Reply" | [ai/generate](src/app/api/ai/generate/route.ts), [style-memory.ts](src/lib/style-memory.ts), [usage-limits.ts](src/lib/usage-limits.ts) | `gym_settings`,`style_*`,`usage_counters` | Gemini | ReplyPanel |
+| 5 | **AI reply generation** | "Suggest a Reply" | [ai/generate](src/app/api/ai/generate/route.ts), [style-memory.ts](src/lib/style-memory.ts), [usage-limits.ts](src/lib/usage-limits.ts) | `gym_settings`,`style_*`,`usage_counters`,`ai_generations` | Gemini | ReplyPanel |
 | 6 | **Send reply** | "Send Reply" | [gmail/send](src/app/api/gmail/send/route.ts), [ai-generations.ts](src/app/actions/ai-generations.ts) | `email_threads`,`ai_generations`,`style_samples` | Gmail API | ReplyPanel |
 | 7 | **Style learning** | sends, settings paste/list/delete, backfill | [style-memory.ts](src/lib/style-memory.ts), [style/*](src/app/api/style/) (incl. [samples](src/app/api/style/samples/route.ts)) | `style_samples`,`style_profile`,`style_feedback` | Gemini embed + RPCs | StyleFeedback, settings |
 | 8 | **Style feedback** | "Sound like you?" | [style/feedback](src/app/api/style/feedback/route.ts) | `style_feedback`,`style_samples` | `apply_style_feedback` | StyleFeedback |
@@ -808,10 +808,11 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
         read style_profile
    → buildStylePromptSection() + tone rule
    → Gemini generateContent (flash-lite, 160 tok, temp 0.4)
+   → insert ai_generations row (type:reply, status:pending)   ← added in commit ad928cf
    ↓
-[Response] { generation:null, subject:"Re: …", body }
+[Response] { generation:<ai_generations row | null>, subject:"Re: …", body }
    ↓
-[UI] setDraftBody(body) → editable textarea
+[UI] setGeneration(row) + setDraftBody(body) → editable textarea
 ```
 
 ### Flow 2 — Send a reply
@@ -904,7 +905,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 ### Authorization
 - **RLS is the primary boundary** — `auth.uid() = user_id` on all tables (or parent-thread subquery for `email_messages`; `profiles` is `auth.uid() = id`, **select-only** for owners) ([schema.sql](supabase/schema.sql), [style-memory-schema.sql](supabase/style-memory-schema.sql)). Anon key used everywhere **except the Stripe webhook**, which uses the **service-role key (bypasses RLS)** to write `profiles` — justified because it has no session and is authenticated by Stripe signature instead. RPCs are mostly `security invoker` (RLS preserved); `increment_usage` and the `handle_new_user` trigger are `security definer`.
-- **Subscription/access gate (two layers)** — (1) middleware redirects logged-in, non-`active` users away from the four app *page* routes to `/subscribe`; (2) the billed API routes (`/api/ai/generate`, `/api/gmail/*`, `/api/style/*`) enforce the same check in-handler via the shared `requirePaidUser(supabase)` helper ([subscription.ts](src/lib/subscription.ts)) — auth + `profiles.subscription_status === 'active'`, returning 401/402. The paywall therefore now covers the cost-incurring endpoints, not just the UI (see §11).
+- **Subscription/access gate (two layers)** — (1) middleware redirects logged-in, non-`active` users away from the four app *page* routes to `/subscribe`; (2) the billed API routes (`/api/ai/generate`, `/api/gmail/*`, `/api/style/*`) enforce the same check in-handler via the shared `requirePaidUser(supabase)` helper ([subscription.ts](src/lib/subscription.ts)) — auth + `profiles.subscription_status === 'active'`, returning 401/402. The paywall therefore now covers the cost-incurring endpoints, not just the UI (see §11). The **`approveGeneration` server action** (style learning triggered on send) is also gated with `requirePaidUser` + `enforceDailyLimit("add_sample")` as of commit `bffa773`.
 - App-layer checks: per-endpoint `getUser()`; ownership re-check in feedback route; Stripe webhook signature verification.
 
 ### Input validation
@@ -950,7 +951,7 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 ### Network requests
 - Generation: embedding + profile fetched in parallel inside `retrieveStyleContext` ([style-memory.ts:323-330](src/lib/style-memory.ts#L323-L330)).
-- **Sync is now incremental + bounded-parallel:** threads whose `gmail_history_id` is unchanged are skipped entirely (no `threads.get`); the remainder are fetched 4-at-a-time via `mapPool`, and each thread's messages are written in a single batched upsert. This replaced the previous strictly-sequential N+1 loop, cutting both API round-trips and DB writes on a typical re-sync. Still capped at 200 listed threads per serverless invocation; backfill remains batched (20) for the same timeout reason. **[High]**
+- **Sync is now incremental + bounded-parallel:** threads whose `gmail_history_id` is unchanged are skipped entirely (no `threads.get`); the remainder are fetched 4-at-a-time via `mapPool`, and each thread's messages are written in a single batched upsert. This replaced the previous strictly-sequential N+1 loop, cutting both API round-trips and DB writes on a typical re-sync. Still capped at 200 listed threads per serverless invocation (the route now declares `maxDuration = 60` for more timeout headroom, commit `ad928cf`); backfill remains batched (20) for the same timeout reason. **[High]**
 - Prompt inputs are aggressively truncated (last 2 messages ×180 chars; inbound ×400; embed ×1000; raw email ×12000) to control token cost/latency ([generate:9,59-75](src/app/api/ai/generate/route.ts#L59-L75), [style-memory.ts:20](src/lib/style-memory.ts#L20)).
 
 ### State update patterns
@@ -962,14 +963,14 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 # 18. Technical Debt Inventory
 
-> Several items from previous revisions have been **resolved** and are no longer debt: the duplicate/misconfigured middleware (now a single correct file), the 722-line `inbox/page.tsx` (split into `inbox/components/*`), the strictly-sequential sync N+1 (now incremental + parallel), `weight` being unused in ranking (now consumed by `match_style_samples`), the unused deps/components/SSE branch (deleted), and — new this revision — **plaintext Gmail refresh tokens** (now AES-256-GCM encrypted via [token-crypto.ts](src/lib/token-crypto.ts)), and — also this revision — the **subscription paywall not covering billed API routes** (every billed route — `/api/ai/generate`, `/api/gmail/*`, `/api/style/*` — now calls `requirePaidUser` from [subscription.ts](src/lib/subscription.ts), which enforces auth + an `active` subscription in-handler). They're called out here so a reader of an older doc isn't confused.
+> Several items from previous revisions have been **resolved** and are no longer debt: the duplicate/misconfigured middleware (now a single correct file), the 722-line `inbox/page.tsx` (split into `inbox/components/*`), the strictly-sequential sync N+1 (now incremental + parallel), `weight` being unused in ranking (now consumed by `match_style_samples`), the unused deps/components/SSE branch (deleted), and — new this revision — **plaintext Gmail refresh tokens** (now AES-256-GCM encrypted via [token-crypto.ts](src/lib/token-crypto.ts)), and — also this revision — the **subscription paywall not covering billed API routes** (every billed route — `/api/ai/generate`, `/api/gmail/*`, `/api/style/*` — now calls `requirePaidUser` from [subscription.ts](src/lib/subscription.ts), which enforces auth + an `active` subscription in-handler). **New this revision (commits `ad928cf` + `bffa773`):** the long-standing **"style learning from live sends often doesn't fire"** item is now resolved — `/api/ai/generate` persists an `ai_generations` row and returns it (so a fresh draft carries a real `generation`), and `approveGeneration`'s send-time `addStyleSample` path now runs for the typical send (gated by `requirePaidUser` + `enforceDailyLimit("add_sample")`). They're called out here so a reader of an older doc isn't confused.
 
 ### High Risk
-1. **Style learning from live sends often doesn't fire.** `/api/ai/generate` returns `generation:null` ([generate:112](src/app/api/ai/generate/route.ts#L112)), so `approveGeneration`'s `addStyleSample` path is usually skipped on fresh drafts. *Why high:* the headline feature's send-time feedback loop is partially inert; learning effectively depends on manual add-sample/backfill. **[Medium-High]** (Confidence Medium on real-world frequency since a thread could carry a pre-existing generation.)
+1. **Style learning from live sends now fires (was: "often doesn't fire").** *Resolved in commit `ad928cf`.* `/api/ai/generate` previously returned `generation:null`, so `approveGeneration`'s `addStyleSample` path was usually skipped on fresh drafts. The route now inserts an `ai_generations` row and returns it, so the send-time feedback loop is wired. *Residual:* if the insert errors, `generation` falls back to `null` and that send won't add a sample (the error is only `console.error`-logged), and learning is now additionally gated behind `requirePaidUser` + the `add_sample` daily cap (commit `bffa773`). **[Low]** (downgraded from Medium-High).
 
 ### Medium Risk
 2. **Multiple near-duplicate HTML/text cleaners** with subtle differences: `cleanEmailText` ([style-memory.ts:33](src/lib/style-memory.ts#L33)), `toPlainText` ([generate:11](src/app/api/ai/generate/route.ts#L11)), `cleanBody` (now in [inbox/components/MessageBubble.tsx](src/app/inbox/components/MessageBubble.tsx)), `sanitize` ([sync](src/app/api/gmail/sync/route.ts)). *Why:* will drift — the inbox copy now also owns quoted-text stripping, widening the divergence. **[High]**
-3. **200-thread single invocation for sync.** Incremental skip + 4-way parallelism reduced the load, but a first sync (or a busy mailbox where many threads changed) still fetches up to 200 threads in one serverless call. *Why:* timeout/rate-limit risk at the tail. **[Medium]**
+3. **200-thread single invocation for sync.** Incremental skip + 4-way parallelism reduced the load, but a first sync (or a busy mailbox where many threads changed) still fetches up to 200 threads in one serverless call. Commit `ad928cf` set `maxDuration = 60` (more timeout headroom) and made auto-archive skip when the listing hits the 200 cap, but the underlying tail-timeout/rate-limit risk on a large first sync remains. **[Medium]**
 4. **Value-interpolated `in(...)` filters** in sync/backfill ([sync](src/app/api/gmail/sync/route.ts), [backfill:40-46](src/app/api/style/backfill/route.ts#L40-L46)) — brushes the "no interpolation in filters" rule and has a documented URL-budget ceiling. **[Medium]**
 5. **Redundant `.eq("user_id")` filters** contradict [AGENTS.md](AGENTS.md) (e.g. [threads.ts:16](src/app/actions/threads.ts#L16), [contacts.ts:14](src/app/actions/contacts.ts#L14)). Harmless defense-in-depth but the kind of drift the doc warns about. (Note: the new `samples` route deliberately omits them, per the convention.) **[High]**
 6. **Thin test coverage** — only `style-memory.ts` and `style/*` are tested ([jest.config.ts](jest.config.ts)); the riskiest code (sync, send, middleware, generate) is untested. The sync rewrite (parallel `mapPool`, incremental partition) added logic with no tests. **[High]**
@@ -1083,7 +1084,19 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 
 ## Confidence & Limitations Summary
 - **High confidence:** folder/route structure (incl. the inbox component split and the new `subscribe`/`stripe` routes), data model (incl. `gmail_history_id` and `profiles`), RLS-as-authz + the single service-role exception, the generate/sync/send flows, the Stripe checkout/webhook flow, the subscription gate in middleware (and that it does **not** cover `/api/*`), Gmail token encryption, Turnstile on auth — all read directly from the current source.
-- **Medium confidence:** real-world frequency of the "generation:null skips learning" issue; exact caching behaviour of Next 16 RSC; `connection()` intent; the precise Stripe API version pinned by `stripe@^22`; the practical likelihood of the checkout↔webhook activation race.
+- **Medium confidence:** how often the `ai_generations` insert in `/api/ai/generate` errors (the only remaining path back to `generation:null` after commit `ad928cf`); exact caching behaviour of Next 16 RSC; `connection()` intent; the precise Stripe API version pinned by `stripe@^22`; the practical likelihood of the checkout↔webhook activation race.
 - **Could not be determined from the codebase:** production env-var values (`.env.local`/`.env.local.example` are outside the readable path); whether the SQL files (incl. the `profiles` table + trigger) have actually been applied to the live DB (they are manual); whether the live Supabase project has Turnstile captcha actually enabled (the app only supplies the token); runtime performance numbers; whether `templates`/`scheduled_follow_ups`/`activity_logs` are used by anything outside this repo.
+
+---
+
+## Fixes completed
+
+- Fix 4 — middleware.ts: `getUser()` wrapped in try/catch (fail open on throw); subscription gate checks `profileError` before redirecting (fail open on DB error).
+
+## Fixes remaining
+
+*(none tracked)*
+
+---
 
 *End of document.*

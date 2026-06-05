@@ -69,9 +69,15 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
+  } catch {
+    supabaseResponse.headers.set("x-nonce", nonce);
+    supabaseResponse.headers.set("Content-Security-Policy", csp);
+    return supabaseResponse;
+  }
 
   const { pathname } = request.nextUrl;
 
@@ -94,13 +100,13 @@ export async function middleware(request: NextRequest) {
   }
 
   if (user && isProtected) {
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("subscription_status")
       .eq("id", user.id)
       .single();
 
-    if (profile?.subscription_status !== "active") {
+    if (!profileError && profile?.subscription_status !== "active") {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = "/subscribe";
       const redirectResponse = NextResponse.redirect(redirectUrl);
