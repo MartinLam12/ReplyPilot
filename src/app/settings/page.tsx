@@ -336,29 +336,9 @@ Coach Martin`}
                 Connect Gmail
               </Button>
             </a>
-            <p className="text-xs text-surface-400">
-              You&apos;ll need to set up a Google Cloud project with Gmail API enabled.{" "}
-              <span className="text-surface-600">See setup instructions below.</span>
-            </p>
           </div>
         )}
       </Card>
-
-      {/* Setup instructions */}
-      {!settings?.gmail_email && (
-        <Card className="border-brand-100 bg-brand-50/30">
-          <CardTitle className="text-base mb-3">Gmail API Setup</CardTitle>
-          <ol className="text-sm text-surface-700 space-y-2 list-decimal list-inside">
-            <li>Go to <strong>console.cloud.google.com</strong> and create a project</li>
-            <li>Enable the <strong>Gmail API</strong> for that project</li>
-            <li>Go to <strong>Credentials → Create OAuth 2.0 Client ID</strong> (Web Application)</li>
-            <li>Add redirect URI: <code className="bg-white px-1.5 py-0.5 rounded text-xs border border-surface-200">{typeof window !== "undefined" ? window.location.origin : ""}/api/gmail/callback</code></li>
-            <li>Copy the Client ID and Client Secret into your Vercel environment variables as <code className="bg-white px-1 py-0.5 rounded text-xs border border-surface-200">GOOGLE_CLIENT_ID</code> and <code className="bg-white px-1 py-0.5 rounded text-xs border border-surface-200">GOOGLE_CLIENT_SECRET</code></li>
-            <li>Set <code className="bg-white px-1 py-0.5 rounded text-xs border border-surface-200">GOOGLE_REDIRECT_URI</code> to the same redirect URI above</li>
-            <li>Redeploy, then click <strong>Connect Gmail</strong></li>
-          </ol>
-        </Card>
-      )}
 
       <div className="flex justify-end">
         <Button onClick={handleSave} loading={saving} icon={<Save className="w-4 h-4" />}>
