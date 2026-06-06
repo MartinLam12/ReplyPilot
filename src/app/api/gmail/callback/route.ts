@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
-import { createClient } from "@/lib/supabase/server";
+import { createRouteClient } from "@/lib/supabase/route";
 import { encryptToken } from "@/lib/token-crypto";
 import type { NextRequest } from "next/server";
 
@@ -23,7 +23,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/settings?error=gmail_invalid_state`);
   }
 
-  const supabase = await createClient();
+  // Construct the response first so Supabase can write refreshed session cookies onto it.
+  const response = NextResponse.redirect(`${origin}/settings?connected=true`);
+  const supabase = createRouteClient(request, response);
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
@@ -36,7 +38,12 @@ export async function GET(request: NextRequest) {
     process.env.GOOGLE_REDIRECT_URI
   );
 
-  const { tokens } = await oauth2Client.getToken(code);
+  let tokens;
+  try {
+    ({ tokens } = await oauth2Client.getToken(code));
+  } catch {
+    return NextResponse.redirect(`${origin}/settings?error=gmail_auth_failed`);
+  }
 
   // Get the connected Gmail address
   oauth2Client.setCredentials(tokens);
@@ -44,7 +51,7 @@ export async function GET(request: NextRequest) {
   const profile = await gmail.users.getProfile({ userId: "me" });
   const gmailEmail = profile.data.emailAddress || "";
 
-  await supabase.from("gym_settings").upsert(
+  const { error: upsertError } = await supabase.from("gym_settings").upsert(
     {
       user_id: user.id,
       gmail_email: gmailEmail,
@@ -53,8 +60,10 @@ export async function GET(request: NextRequest) {
     },
     { onConflict: "user_id" }
   );
+  if (upsertError) {
+    return NextResponse.redirect(`${origin}/settings?error=gmail_auth_failed`);
+  }
 
-  const response = NextResponse.redirect(`${origin}/settings?connected=true`);
   // Clear the state cookie now that it has been consumed.
   response.cookies.set("oauth_gmail_state", "", { maxAge: 0, path: "/" });
   return response;

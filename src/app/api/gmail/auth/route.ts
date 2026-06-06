@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
-import { createClient } from "@/lib/supabase/server";
+import { createRouteClient } from "@/lib/supabase/route";
 import { randomBytes } from "crypto";
+import type { NextRequest } from "next/server";
 
-export async function GET() {
-  const supabase = await createClient();
+export async function GET(request: NextRequest) {
+  const tempResponse = NextResponse.redirect("http://placeholder");
+  const supabase = createRouteClient(request, tempResponse);
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
