@@ -37,7 +37,7 @@ export async function POST() {
     try {
       await stripe.subscriptions.cancel(profile.subscription_id as string);
     } catch (err) {
-      const stripeErr = err as Stripe.errors.StripeError;
+      const stripeErr = err as InstanceType<typeof Stripe.errors.StripeError>;
       const alreadyCancelled =
         stripeErr?.code === "subscription_already_canceled" ||
         (stripeErr as unknown as { status?: string })?.status === "canceled";
