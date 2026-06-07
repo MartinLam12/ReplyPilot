@@ -37,14 +37,20 @@ export async function POST() {
     try {
       await stripe.subscriptions.cancel(profile.subscription_id as string);
     } catch (err) {
-      console.error(
-        "[delete-account] Stripe cancel failed:",
-        err instanceof Error ? err.message : err
-      );
-      return NextResponse.json(
-        { error: "Could not cancel your subscription. Please try again or contact support." },
-        { status: 500 }
-      );
+      const stripeErr = err as Stripe.errors.StripeError;
+      const alreadyCancelled =
+        stripeErr?.code === "subscription_already_canceled" ||
+        (stripeErr as unknown as { status?: string })?.status === "canceled";
+      if (!alreadyCancelled) {
+        console.error(
+          "[delete-account] Stripe cancel failed:",
+          err instanceof Error ? err.message : err
+        );
+        return NextResponse.json(
+          { error: "Could not cancel your subscription. Please try again or contact support." },
+          { status: 500 }
+        );
+      }
     }
   }
 
