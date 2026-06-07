@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import { Card, CardTitle, CardDescription, Button, Input, Textarea } from "@/components/ui";
 import { getGymSettings, saveGymSettings, disconnectGmail } from "@/app/actions/gym-settings";
-import { Save, Building2, Mail, CheckCircle2, AlertCircle, Sparkles, Plus, Trash2, XCircle } from "lucide-react";
+import { Save, Building2, Mail, CheckCircle2, AlertCircle, Sparkles, Plus, Trash2, XCircle, TriangleAlert } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 import type { GymSettings } from "@/lib/types";
 
 interface StyleSample {
@@ -36,6 +37,10 @@ export default function SettingsPage() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelledUntil, setCancelledUntil] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const loadExamples = () => {
     fetch("/api/style/samples")
@@ -154,6 +159,27 @@ export default function SettingsPage() {
       setCancelError("Network error. Please try again.");
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch("/api/account/delete", { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setDeleteError(data?.error ?? "Could not delete account. Please try again.");
+        return;
+      }
+      // Session is now invalid — sign out locally then redirect to home.
+      const supabase = createClient();
+      await supabase.auth.signOut().catch(() => {});
+      window.location.href = "/";
+    } catch {
+      setDeleteError("Network error. Please try again.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -430,6 +456,53 @@ Coach Martin`}
         <Button onClick={handleSave} loading={saving} icon={<Save className="w-4 h-4" />}>
           Save Changes
         </Button>
+      </div>
+
+      {/* Danger zone */}
+      <div className="border border-red-200 rounded-2xl p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
+            <TriangleAlert className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-red-700">Danger zone</h2>
+            <p className="text-sm text-surface-500">
+              Permanently delete your account and all associated data. This cannot be undone.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-sm text-surface-700">
+            Type <span className="font-mono font-semibold text-red-700">DELETE</span> to confirm:
+          </p>
+          <Input
+            label=""
+            value={deleteConfirm}
+            onChange={(e) => {
+              setDeleteConfirm(e.target.value);
+              setDeleteError(null);
+            }}
+            placeholder="DELETE"
+          />
+
+          {deleteError && (
+            <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="min-w-0 break-words">{deleteError}</div>
+            </div>
+          )}
+
+          <Button
+            variant="danger"
+            size="sm"
+            loading={deleting}
+            disabled={deleteConfirm !== "DELETE"}
+            onClick={handleDeleteAccount}
+          >
+            Delete my account
+          </Button>
+        </div>
       </div>
     </div>
   );
