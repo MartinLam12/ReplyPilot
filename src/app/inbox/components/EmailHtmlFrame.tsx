@@ -10,9 +10,10 @@ function upgradeHttpUrls(html: string): string {
 }
 
 const BASE_STYLES = `
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
 <base target="_blank">
 <meta name="color-scheme" content="light">
-<meta http-equiv="Content-Security-Policy" content="default-src * data: blob:; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; frame-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src * data: blob:; script-src 'unsafe-inline'; connect-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; frame-src 'none';">
 <style>
   img{max-width:100%!important;height:auto}
   table{max-width:100%!important}
