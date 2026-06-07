@@ -16,7 +16,7 @@ const BASE_STYLES = `
 <style>
   img{max-width:100%!important;height:auto}
   table{max-width:100%!important}
-  body{word-wrap:break-word;overflow-wrap:break-word}
+  body{word-wrap:break-word;overflow-wrap:break-word;font-family:Inter,Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5}
 </style>`;
 
 function buildSrcDoc(raw: string): string {
@@ -33,7 +33,7 @@ function buildSrcDoc(raw: string): string {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 ${inject}
 <style>
-  body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;
+  body{font-family:Inter,Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;
        margin:0;padding:16px;color:#333}
   a{color:#1a73e8}
 </style>
