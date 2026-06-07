@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Card, CardTitle, CardDescription, Button, Input, Textarea } from "@/components/ui";
 import { getGymSettings, saveGymSettings, disconnectGmail } from "@/app/actions/gym-settings";
-import { Save, Building2, Mail, CheckCircle2, AlertCircle, Sparkles, Plus, Trash2 } from "lucide-react";
+import { Save, Building2, Mail, CheckCircle2, AlertCircle, Sparkles, Plus, Trash2, XCircle } from "lucide-react";
 import type { GymSettings } from "@/lib/types";
 
 interface StyleSample {
@@ -31,6 +31,12 @@ export default function SettingsPage() {
   const [exampleError, setExampleError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
+  const [subPeriodEnd, setSubPeriodEnd] = useState<string | null>(null);
+  const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelledUntil, setCancelledUntil] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
   const loadExamples = () => {
     fetch("/api/style/samples")
       .then((r) => r.json())
@@ -53,6 +59,11 @@ export default function SettingsPage() {
       .catch(() => setSampleCount(0));
 
     loadExamples();
+
+    fetch("/api/stripe/cancel")
+      .then((r) => r.json())
+      .then((d) => setSubPeriodEnd(d.periodEnd ?? null))
+      .catch(() => {});
 
     // Handle OAuth result query params
     const params = new URLSearchParams(window.location.search);
@@ -125,6 +136,25 @@ export default function SettingsPage() {
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
+  };
+
+  const handleCancelSubscription = async () => {
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      const res = await fetch("/api/stripe/cancel", { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setCancelError(data?.error ?? "Could not cancel. Please try again.");
+        return;
+      }
+      setCancelledUntil(data.periodEnd);
+      setCancelConfirm(false);
+    } catch {
+      setCancelError("Network error. Please try again.");
+    } finally {
+      setCancelling(false);
+    }
   };
 
   const handleDisconnect = async () => {
@@ -339,6 +369,62 @@ Coach Martin`}
           </div>
         )}
       </Card>
+
+      {/* Subscription — only shown when the user has an active subscription */}
+      {subPeriodEnd && (
+        <Card>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-xl bg-surface-100 flex items-center justify-center">
+              <XCircle className="w-5 h-5 text-surface-600" />
+            </div>
+            <div>
+              <CardTitle>Subscription</CardTitle>
+              <CardDescription>Manage your ReplyPilot subscription</CardDescription>
+            </div>
+          </div>
+
+          {cancelledUntil ? (
+            <div className="text-sm text-surface-700 bg-surface-50 border border-surface-200 rounded-xl p-4">
+              Your subscription will end on {new Date(cancelledUntil).toLocaleDateString()}.
+            </div>
+          ) : cancelConfirm ? (
+            <div className="space-y-3">
+              <p className="text-sm text-surface-700">
+                Are you sure? You&apos;ll keep access until{" "}
+                <span className="font-medium">{new Date(subPeriodEnd).toLocaleDateString()}</span>.
+              </p>
+              {cancelError && (
+                <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  {cancelError}
+                </div>
+              )}
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCancelConfirm(false)}
+                  disabled={cancelling}
+                >
+                  Keep subscription
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  loading={cancelling}
+                  onClick={handleCancelSubscription}
+                >
+                  Yes, cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button variant="outline" size="sm" onClick={() => setCancelConfirm(true)}>
+              Cancel subscription
+            </Button>
+          )}
+        </Card>
+      )}
 
       <div className="flex justify-end">
         <Button onClick={handleSave} loading={saving} icon={<Save className="w-4 h-4" />}>
