@@ -520,6 +520,21 @@ The backend = **Server Actions** + **Route Handlers** + **domain library** + **P
 | `/api/stripe/checkout` | POST | — | `{url}` (Checkout session) | unauth 401; missing price 500; missing `NEXT_PUBLIC_APP_URL` 500 | Stripe, `profiles` (read+write `stripe_customer_id`) |
 | `/api/stripe/webhook` | POST | raw Stripe event + `stripe-signature` | `{received:true}` | **signature verify** 400; handler error 500 | Stripe, `profiles` via **service-role** client |
 | `/auth/callback` | GET | `?code`,`?next` | 302 | exchange error → `/login?error` | Supabase Auth |
+| `/api/account/delete` | DELETE | — | `{success:true}` | unauth 401; service-role for auth user deletion | Stripe (cancel subscription), all user tables in FK-safe order, `auth.users` via service-role |
+
+> **Delete account — FK-safe deletion order.** The route deletes in this sequence to avoid FK constraint violations; reordering steps will break it:
+> 1. `scheduled_follow_ups`
+> 2. `style_samples`
+> 3. `style_profile`
+> 4. `email_threads` (cascades to `email_messages`, `ai_generations`, `style_feedback`)
+> 5. `contacts`
+> 6. `templates`
+> 7. `gym_settings` (also removes the encrypted Gmail refresh token)
+> 8. `activity_logs`
+> 9. `usage_counters`
+> 10. Auth user deletion via service-role key → cascades to `profiles`
+>
+> Stripe cancellation happens before step 1 (see §18 for the atomicity limitation).
 
 ### Domain/business logic
 
@@ -722,6 +737,7 @@ Enforced by the (single, root) middleware's `protectedRoutes`/`authRoutes`/`subs
 | 13 | **Marketing/legal** | `/`,`/about`,`/contact`,`/privacy`,`/terms` | respective pages | — | — | LandingNavbar, Footer |
 | 14 | **Subscription / billing (paywall)** | `/subscribe`, Stripe Checkout/webhook | [subscribe/page.tsx](src/app/subscribe/page.tsx), [stripe/checkout](src/app/api/stripe/checkout/route.ts), [stripe/webhook](src/app/api/stripe/webhook/route.ts), [middleware.ts](middleware.ts), [subscription.ts](src/lib/subscription.ts) | `profiles` | Stripe | — |
 | 15 | **Gmail token encryption** | inside connect/sync/send | [token-crypto.ts](src/lib/token-crypto.ts) | `gym_settings` | Node `crypto` | — |
+| 16 | **Delete account** | Settings → `/api/account/delete` | [api/account/delete](src/app/api/account/delete/route.ts) | all user tables, `auth.users` (cascade via service-role auth deletion) | Stripe (immediate subscription cancel), Supabase service-role (auth user deletion) | settings page (danger zone) |
 
 **Defined-but-unused (data model only):** templates, scheduled_follow_ups. **[High]**
 
@@ -978,6 +994,10 @@ Ranked by importance for *understanding* the app (criticality × blast-radius). 
 6b. **Verbose debug logging in the Stripe webhook.** [stripe/webhook/route.ts](src/app/api/stripe/webhook/route.ts) emits many `console.log/warn/error` lines (added while debugging activation, per commits `3272c47`/`9a92928`), some including `customerId`/`subscriptionId`/`uid`. *Why:* log noise + low-grade identifier leakage into logs; should be trimmed now that activation works. **[Medium]**
 6c. **Checkout↔webhook activation race.** Checkout redirects to `/dashboard` while activation happens asynchronously in the webhook; if the webhook is slow, the user is bounced to `/subscribe` despite having paid. No "pending"/polling state. **[Medium]**
 6d. **Two sources of truth for subscription status.** Middleware queries `profiles.subscription_status` inline; [subscription.ts](src/lib/subscription.ts) `requirePaidUser` is a separate reader (used by the billed API routes) that the middleware doesn't share. They can drift in interpretation (e.g. handling of `past_due`). The webhook also collapses all Stripe statuses to just `active`/`inactive` ([webhook:105](src/app/api/stripe/webhook/route.ts#L105)), discarding `past_due`/`trialing`/`canceled` nuance. **[Medium]**
+
+6e. **Delete account is non-atomic across Stripe and Supabase.** Stripe subscription cancellation (step 3) occurs before any DB deletion. If DB deletion fails partway through steps 4a–4i, the subscription is already cancelled but the account still exists and the user can still log in. The route is idempotent — a retry will complete cleanly once the underlying issue resolves — but data deleted before the failure point is unrecoverable. A proper fix would require a compensation pattern or cleanup queue. Deferred post-launch. **[Medium]**
+
+6f. **Stripe retry on already-cancelled subscription — handled.** The cancel step treats `subscription_already_canceled` as a success so retries complete without erroring. No action needed; noted here so a future engineer doesn't re-add error handling for that case. **[Low]**
 
 ### Low Risk
 7. **Unused data model:** `templates` (seeded but unread), `scheduled_follow_ups`. **[High]** (`activity_logs` is no longer unused — see §13.)
