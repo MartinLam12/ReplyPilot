@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui";
@@ -13,8 +14,8 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [done, setDone] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState("");
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,7 +36,7 @@ export default function SignupPage() {
       if (authError && authError.message !== "User already registered") {
         throw authError;
       }
-      setDone(true);
+      router.push("/login?registered=1");
     } catch (err) {
       setError(err instanceof Error && err.message
         ? "Something went wrong. Please try again."
@@ -44,25 +45,6 @@ export default function SignupPage() {
       setLoading(false);
     }
   };
-
-  if (done) {
-    return (
-      <div className="min-h-screen flex items-center justify-center px-4 bg-surface-50">
-        <div className="w-full max-w-sm text-center">
-          <div className="w-12 h-12 rounded-full bg-brand-100 flex items-center justify-center mx-auto mb-4">
-            <span className="text-2xl">✓</span>
-          </div>
-          <h2 className="text-xl font-bold text-surface-900 mb-2">Check your email</h2>
-          <p className="text-surface-500 text-sm">
-            We sent a confirmation link to <strong>{email}</strong>. Click it to activate your account.
-          </p>
-          <Link href="/login" className="block mt-6 text-brand-600 text-sm font-medium hover:underline">
-            Back to sign in
-          </Link>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 bg-surface-50">
