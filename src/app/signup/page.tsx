@@ -36,7 +36,7 @@ export default function SignupPage() {
       if (authError && authError.message !== "User already registered") {
         throw authError;
       }
-      router.push("/dashboard");
+      router.push("/login?registered=1");
     } catch (err) {
       setError(err instanceof Error && err.message
         ? "Something went wrong. Please try again."

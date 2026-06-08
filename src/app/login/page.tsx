@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui";
@@ -13,6 +14,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
+  const searchParams = useSearchParams();
+  const registered = searchParams.get("registered") === "1";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,6 +52,11 @@ export default function LoginPage() {
         </div>
 
         <div className="bg-white rounded-2xl border border-surface-200 shadow-soft-sm p-6">
+          {registered && (
+            <div className="mb-4 p-3 bg-surface-100 border border-surface-200 rounded-xl text-sm text-surface-700">
+              Account created — sign in to continue.
+            </div>
+          )}
           {error && (
             <div className="mb-4 p-3 bg-danger-50 border border-danger-200 rounded-xl text-sm text-danger-700">
               {error}
