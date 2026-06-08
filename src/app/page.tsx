@@ -43,7 +43,7 @@ function HeroSection() {
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link href="/signup">
                 <Button size="lg" icon={<ArrowRight className="w-5 h-5" />}>
-                  Get Started Free
+                  Get Started
                 </Button>
               </Link>
               <Link href="/login">
